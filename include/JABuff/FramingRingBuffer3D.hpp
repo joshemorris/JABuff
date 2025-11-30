@@ -1,9 +1,10 @@
 #pragma once
 
-#include <vector>       // For std::vector
-#include <stdexcept>    // For std::stdexcept
-#include <cstring>      // For std::memcpy
-#include <cstddef>      // For size_t
+#include <vector>
+#include <stdexcept>
+#include <cstring>
+#include <cstddef>
+#include <string>
 
 namespace JABuff {
 
@@ -21,10 +22,6 @@ namespace JABuff {
 template <typename T>
 class FramingRingBuffer3D {
 public:
-    // ===================================================================
-    // --- Class Declaration ---
-    // ===================================================================
-
     /**
      * @brief Construct a new 3D Framing Ring Buffer.
      *
@@ -39,78 +36,51 @@ public:
     FramingRingBuffer3D(size_t num_channels, size_t feature_dim, size_t capacity_time, size_t frame_size_time, size_t hop_size_time);
 
     /**
-     * @brief Writes a block of data to the buffer.
-     * This is a non-blocking call.
-     * @param data_in A vector of vectors [channel][time][feature] containing the
-     * data to write. All channels must have the same number
-     * of time steps, and all time steps must have 'feature_dim' features.
-     * @return true if the write was successful, false if the buffer was full
-     * or if dimensions mismatch.
+     * @brief Writes a block of data.
+     * @return true if write succeeded, false if buffer full.
+     * @throws std::invalid_argument if dimensions mismatch.
+     * @throws std::out_of_range if offset/count exceeds input bounds.
      */
-    bool write(const std::vector<std::vector<std::vector<T>>>& data_in);
+    bool write(const std::vector<std::vector<std::vector<T>>>& data_in, size_t offset_time = 0, size_t num_time_steps = 0);
 
     /**
-     * @brief Reads a frame of data from the buffer and consumes the hop size.
-     * This is a non-blocking call.
-     * @param frame_data_out The vector to read data into. Must be pre-sized
-     * to [num_channels][frame_size_time][feature_dim].
-     * @return true if the read was successful, false if the buffer had
-     * insufficient data or if dimensions mismatch.
+     * @brief Reads a frame.
+     * @return true if read succeeded, false if insufficient data.
+     * @throws std::invalid_argument if output buffer dimensions mismatch.
      */
     bool read(std::vector<std::vector<std::vector<T>>>& frame_data_out);
 
-    /** @return The number of full frames available to be read. */
     size_t getAvailableFramesRead() const;
-
-    /** @return The number of time steps currently available to be read. */
     size_t getAvailableTimeRead() const;
-
-    /** @return The number of empty time steps available to be written. */
     size_t getAvailableWrite() const;
-
-    /** @return The total time step capacity of the buffer *per channel*. */
     size_t getCapacity() const;
-
-    /** @return The number of channels. */
     size_t getNumChannels() const;
-
-    /** @return The size of the feature dimension. */
     size_t getFeatureDim() const;
-
-    /** @return The frame size in time steps. */
     size_t getFrameSizeTime() const;
-
-    /** @return The hop size in time steps. */
     size_t getHopSizeTime() const;
-
-    /** @return true if the buffer is full (available write == 0). */
     bool isFull() const;
-
-    /** @return true if the buffer is empty (available time read == 0). */
     bool isEmpty() const;
-    
-    /** @brief Clears the buffer, resetting all pointers. Not thread-safe. */
     void clear();
 
 private:
+    // --- Helpers ---
+    void validateWriteInput(const std::vector<std::vector<std::vector<T>>>& data_in, size_t offset_time, size_t num_time_steps, size_t& calculated_write_size) const;
+    void validateReadOutput(const std::vector<std::vector<std::vector<T>>>& frame_data_out) const;
+
     // --- Member Variables ---
-    // Storage: [Channel][Time][Feature]
     std::vector<std::vector<std::vector<T>>> m_buffers; 
-    
     size_t m_num_channels;
     size_t m_feature_dim;
     size_t m_capacity_time;
     size_t m_frame_size_time;
     size_t m_hop_size_time;
-
-    // Indices are in "time steps"
     size_t m_write_index_time;
     size_t m_read_index_time;
     size_t m_available_time;
 };
 
 // ===================================================================
-// --- Class Implementation ---
+// --- Implementation ---
 // ===================================================================
 
 template <typename T>
@@ -134,7 +104,6 @@ FramingRingBuffer3D<T>::FramingRingBuffer3D(size_t num_channels, size_t feature_
         throw std::invalid_argument("Hop size must be non-zero.");
     }
 
-    // Allocate the 3D buffer
     m_buffers.resize(m_num_channels);
     for (size_t c = 0; c < m_num_channels; ++c) {
         m_buffers[c].resize(m_capacity_time);
@@ -145,87 +114,124 @@ FramingRingBuffer3D<T>::FramingRingBuffer3D(size_t num_channels, size_t feature_
 }
 
 template <typename T>
-bool FramingRingBuffer3D<T>::write(const std::vector<std::vector<std::vector<T>>>& data_in) {
-    if (data_in.empty() || data_in.size() != m_num_channels) {
-        return false; // Channel mismatch
+void FramingRingBuffer3D<T>::validateWriteInput(const std::vector<std::vector<std::vector<T>>>& data_in, size_t offset_time, size_t num_time_steps, size_t& calculated_write_size) const {
+    if (data_in.size() != m_num_channels) {
+        throw std::invalid_argument("Input data channel count (" + std::to_string(data_in.size()) + 
+                                    ") does not match buffer channels (" + std::to_string(m_num_channels) + ").");
     }
 
-    const size_t num_time_steps_to_write = data_in[0].size();
-    if (num_time_steps_to_write == 0) {
-        return true; // Nothing to write
-    }
+    if (data_in.empty()) return;
 
-    if (num_time_steps_to_write > getAvailableWrite()) {
-        return false; // Not enough space
-    }
-
-    // Write data, looping one time step at a time to handle wrap-around
-    for (size_t c = 0; c < m_num_channels; ++c) {
-        if (data_in[c].size() != num_time_steps_to_write) {
-            return false; // All channels must have same number of time steps
+    size_t input_time_size = data_in[0].size();
+    
+    // Check channel consistency
+    for(size_t c = 1; c < m_num_channels; ++c) {
+        if(data_in[c].size() != input_time_size) {
+            throw std::invalid_argument("Input channels have inconsistent time lengths.");
         }
+    }
 
-        for (size_t t = 0; t < num_time_steps_to_write; ++t) {
-            if (data_in[c][t].size() != m_feature_dim) {
-                return false; // Feature dimension mismatch
+    // Check bounds
+    if (offset_time >= input_time_size && input_time_size > 0) {
+        throw std::out_of_range("Write offset (" + std::to_string(offset_time) + ") exceeds input time size (" + std::to_string(input_time_size) + ").");
+    }
+
+    // Auto-calculate size
+    calculated_write_size = num_time_steps;
+    if (calculated_write_size == 0) {
+        calculated_write_size = input_time_size - offset_time;
+    }
+
+    // Check bounds with size
+    if (offset_time + calculated_write_size > input_time_size) {
+        throw std::out_of_range("Write request (Offset: " + std::to_string(offset_time) + 
+                                ", Count: " + std::to_string(calculated_write_size) + 
+                                ") exceeds input bounds.");
+    }
+
+    // Check feature dimensions for the slice we are writing
+    // This adds some overhead, but ensures data integrity before partial writes occur.
+    for (size_t c = 0; c < m_num_channels; ++c) {
+        for (size_t t = 0; t < calculated_write_size; ++t) {
+            size_t idx = offset_time + t;
+            if (data_in[c][idx].size() != m_feature_dim) {
+                throw std::invalid_argument("Feature dimension mismatch at Ch " + std::to_string(c) + 
+                                            ", Time " + std::to_string(idx) + ". Expected " + std::to_string(m_feature_dim) + ".");
             }
+        }
+    }
+}
 
-            // Calculate destination time index
+template <typename T>
+bool FramingRingBuffer3D<T>::write(const std::vector<std::vector<std::vector<T>>>& data_in, size_t offset_time, size_t num_time_steps) {
+    if (data_in.empty()) return true;
+
+    // 1. Validate (Logic Error -> Exception)
+    size_t actual_write_time = 0;
+    validateWriteInput(data_in, offset_time, num_time_steps, actual_write_time);
+
+    if (actual_write_time == 0) return true;
+
+    // 2. Check Capacity (Runtime State -> Return False)
+    if (actual_write_time > getAvailableWrite()) {
+        return false;
+    }
+
+    // 3. Write
+    for (size_t c = 0; c < m_num_channels; ++c) {
+        for (size_t t = 0; t < actual_write_time; ++t) {
+            size_t input_index = offset_time + t;
+            
             size_t write_pos_time = (m_write_index_time + t) % m_capacity_time;
             
-            // Copy the 1D feature vector
             T* dest_ptr = m_buffers[c][write_pos_time].data();
-            const T* src_ptr = data_in[c][t].data();
+            const T* src_ptr = data_in[c][input_index].data();
             std::memcpy(dest_ptr, src_ptr, m_feature_dim * sizeof(T));
         }
     }
 
-    m_write_index_time = (m_write_index_time + num_time_steps_to_write) % m_capacity_time;
-    m_available_time += num_time_steps_to_write;
+    m_write_index_time = (m_write_index_time + actual_write_time) % m_capacity_time;
+    m_available_time += actual_write_time;
 
     return true;
 }
 
 template <typename T>
-bool FramingRingBuffer3D<T>::read(std::vector<std::vector<std::vector<T>>>& frame_data_out) {
-     if (m_frame_size_time > m_available_time) {
-        return false; // Not enough data to read a full frame
-    }
-    
-    if (m_hop_size_time > m_available_time) {
-        return false; // Not enough data to consume a hop
-    }
-
-    // --- Validation ---
+void FramingRingBuffer3D<T>::validateReadOutput(const std::vector<std::vector<std::vector<T>>>& frame_data_out) const {
     if (frame_data_out.size() != m_num_channels) {
-        return false; // Incorrect channel count
+        throw std::invalid_argument("Output channel count mismatch.");
     }
     for (size_t c = 0; c < m_num_channels; ++c) {
         if (frame_data_out[c].size() != m_frame_size_time) {
-            return false; // Incorrect frame time size
+            throw std::invalid_argument("Output frame time length mismatch.");
         }
         for (size_t t = 0; t < m_frame_size_time; ++t) {
             if (frame_data_out[c][t].size() != m_feature_dim) {
-                return false; // Incorrect feature dim
+                throw std::invalid_argument("Output feature dimension mismatch.");
             }
         }
     }
-    // --- End Validation ---
+}
 
-    // Read data, looping one time step at a time to handle wrap-around
+template <typename T>
+bool FramingRingBuffer3D<T>::read(std::vector<std::vector<std::vector<T>>>& frame_data_out) {
+    // 1. Check Availability (Runtime State -> Return False)
+     if (m_frame_size_time > m_available_time) return false;
+    if (m_hop_size_time > m_available_time) return false;
+
+    // 2. Validate Output (Logic Error -> Exception)
+    validateReadOutput(frame_data_out);
+
+    // 3. Read
     for (size_t c = 0; c < m_num_channels; ++c) {
         for (size_t t = 0; t < m_frame_size_time; ++t) {
-            // Calculate source time index
             size_t read_pos_time = (m_read_index_time + t) % m_capacity_time;
-
-            // Copy the 1D feature vector
             T* dest_ptr = frame_data_out[c][t].data();
             const T* src_ptr = m_buffers[c][read_pos_time].data();
             std::memcpy(dest_ptr, src_ptr, m_feature_dim * sizeof(T));
         }
     }
 
-    // Consume hop_size_time
     m_read_index_time = (m_read_index_time + m_hop_size_time) % m_capacity_time;
     m_available_time -= m_hop_size_time;
 
@@ -234,58 +240,36 @@ bool FramingRingBuffer3D<T>::read(std::vector<std::vector<std::vector<T>>>& fram
 
 template <typename T>
 size_t FramingRingBuffer3D<T>::getAvailableFramesRead() const {
-    if (m_available_time < m_frame_size_time) {
-        return 0;
-    }
-    // We have at least one frame.
-    // Calculate how many *more* frames can be read based on the hop.
+    if (m_available_time < m_frame_size_time) return 0;
     return 1 + (m_available_time - m_frame_size_time) / m_hop_size_time;
 }
 
 template <typename T>
-size_t FramingRingBuffer3D<T>::getAvailableTimeRead() const {
-    return m_available_time;
-}
+size_t FramingRingBuffer3D<T>::getAvailableTimeRead() const { return m_available_time; }
 
 template <typename T>
-size_t FramingRingBuffer3D<T>::getAvailableWrite() const {
-    return m_capacity_time - m_available_time;
-}
+size_t FramingRingBuffer3D<T>::getAvailableWrite() const { return m_capacity_time - m_available_time; }
 
 template <typename T>
-size_t FramingRingBuffer3D<T>::getCapacity() const {
-    return m_capacity_time;
-}
+size_t FramingRingBuffer3D<T>::getCapacity() const { return m_capacity_time; }
 
 template <typename T>
-size_t FramingRingBuffer3D<T>::getNumChannels() const {
-    return m_num_channels;
-}
+size_t FramingRingBuffer3D<T>::getNumChannels() const { return m_num_channels; }
 
 template <typename T>
-size_t FramingRingBuffer3D<T>::getFeatureDim() const {
-    return m_feature_dim;
-}
+size_t FramingRingBuffer3D<T>::getFeatureDim() const { return m_feature_dim; }
 
 template <typename T>
-size_t FramingRingBuffer3D<T>::getFrameSizeTime() const {
-    return m_frame_size_time;
-}
+size_t FramingRingBuffer3D<T>::getFrameSizeTime() const { return m_frame_size_time; }
 
 template <typename T>
-size_t FramingRingBuffer3D<T>::getHopSizeTime() const {
-    return m_hop_size_time;
-}
+size_t FramingRingBuffer3D<T>::getHopSizeTime() const { return m_hop_size_time; }
 
 template <typename T>
-bool FramingRingBuffer3D<T>::isFull() const {
-    return getAvailableWrite() == 0;
-}
+bool FramingRingBuffer3D<T>::isFull() const { return getAvailableWrite() == 0; }
 
 template <typename T>
-bool FramingRingBuffer3D<T>::isEmpty() const {
-    return getAvailableTimeRead() == 0;
-}
+bool FramingRingBuffer3D<T>::isEmpty() const { return getAvailableTimeRead() == 0; }
 
 template <typename T>
 void FramingRingBuffer3D<T>::clear() {

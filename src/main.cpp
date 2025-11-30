@@ -231,12 +231,95 @@ void Test3DBuffer() {
     std::cout << "Available frames after read: " << buffer.getAvailableFramesRead() << std::endl; // 1 + (11-10)/5 = 1
 }
 
+void TestOffsetWrite() {
+    std::cout << "\n--- Testing Offset Writes (2D) ---" << std::endl;
+    
+    size_t num_channels = 1;
+    size_t capacity = 100;
+    size_t frame_size = 10;
+    size_t hop_size = 5;
+
+    JABuff::FramingRingBuffer2D<float> buffer(num_channels, capacity, frame_size, hop_size);
+
+    // Create a vector of 20 elements: 0, 1, 2... 19
+    std::vector<std::vector<float>> input_data(num_channels, std::vector<float>(20));
+    std::iota(input_data[0].begin(), input_data[0].end(), 0.0f);
+
+    // Write only elements 5 through 9 (offset 5, length 5)
+    // Expected to write: 5, 6, 7, 8, 9
+    buffer.write(input_data, 5, 5);
+
+    std::cout << "Available features after slice write: " << buffer.getAvailableFeaturesRead() << std::endl; // 5
+
+    // Write elements 15 to end (offset 15, length 0 -> auto calc)
+    // Expected to write: 15, 16, 17, 18, 19
+    buffer.write(input_data, 15); 
+    
+    std::cout << "Available features after 2nd slice write: " << buffer.getAvailableFeaturesRead() << std::endl; // 10
+
+    // Read a frame (size 10)
+    // Should be: 5, 6, 7, 8, 9, 15, 16, 17, 18, 19
+    std::vector<std::vector<float>> output_frame(num_channels, std::vector<float>(frame_size));
+    if (buffer.read(output_frame)) {
+        std::cout << "Read Frame: ";
+        for (float f : output_frame[0]) {
+            std::cout << f << " ";
+        }
+        std::cout << std::endl;
+    } else {
+        std::cout << "Failed to read frame." << std::endl;
+    }
+}
+
+void TestExceptions() {
+    std::cout << "\n--- Testing Exception Handling ---" << std::endl;
+
+    JABuff::FramingRingBuffer2D<float> buffer(1, 100, 10, 5);
+    std::vector<std::vector<float>> input(1, std::vector<float>(20, 1.0f));
+
+    // 1. Test Offset out of range
+    try {
+        buffer.write(input, 50); // Size is 20, offset 50 is invalid
+    } catch (const std::out_of_range& e) {
+        std::cout << "[Success] Caught expected out_of_range: " << e.what() << std::endl;
+    }
+
+    // 2. Test Offset + Count out of range
+    try {
+        buffer.write(input, 15, 10); // Offset 15 + 10 = 25 > 20
+    } catch (const std::out_of_range& e) {
+        std::cout << "[Success] Caught expected out_of_range: " << e.what() << std::endl;
+    }
+
+    // 3. Test Channel Mismatch
+    std::vector<std::vector<float>> bad_channel_input(2, std::vector<float>(10));
+    try {
+        buffer.write(bad_channel_input);
+    } catch (const std::invalid_argument& e) {
+        std::cout << "[Success] Caught expected invalid_argument: " << e.what() << std::endl;
+    }
+
+    // 4. Test Buffer Full (Should NOT throw, should return false)
+    buffer.clear();
+    // Fill buffer (capacity 100)
+    buffer.write(std::vector<std::vector<float>>(1, std::vector<float>(100)));
+    
+    // Try to write more
+    bool result = buffer.write(input);
+    if (!result) {
+        std::cout << "[Success] Buffer full returned false (no exception thrown)." << std::endl;
+    } else {
+        std::cout << "[Fail] Buffer full returned true?" << std::endl;
+    }
+}
 
 int main() {
     std::cout << "JABuff Example Application" << std::endl;
     
     Test2DBuffer();
     Test3DBuffer();
+    TestOffsetWrite();
+    TestExceptions();
     
     return 0;
 }
