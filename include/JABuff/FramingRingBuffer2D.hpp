@@ -5,6 +5,7 @@
 #include <cstring>      // For std::memcpy
 #include <cstddef>      // For size_t
 #include <string>       // For std::to_string
+#include <algorithm>    // For std::min
 
 namespace JABuff {
 
@@ -44,11 +45,15 @@ public:
     bool write(const std::vector<std::vector<T>>& data_in, size_t offset = 0, size_t num_to_write = 0);
 
     /**
-     * @brief Reads a frame of data.
-     * @return true if read succeeded, false if insufficient data.
-     * @throws std::invalid_argument if frame_out dimensions are incorrect.
+     * @brief Reads frames from the buffer.
+     * * @param frames_out Output vector [frame_index][channel][feature]. Resized automatically.
+     * @param num_frames The number of frames to read. 
+     * If 0, reads ALL available frames.
+     * If > 0, strictly requires that number of frames to be available.
+     * @return true if the frames were successfully read.
+     * @return false if there were not enough frames available (or 0 frames available in "Read All" mode).
      */
-    bool read(std::vector<std::vector<T>>& frame_out);
+    bool read(std::vector<std::vector<std::vector<T>>>& frames_out, size_t num_frames = 1);
 
     size_t getAvailableFramesRead() const;
     size_t getAvailableFeaturesRead() const;
@@ -64,7 +69,6 @@ public:
 private:
     // --- Helpers ---
     void validateWriteInput(const std::vector<std::vector<T>>& data_in, size_t offset, size_t num_to_write, size_t& calculated_write_size) const;
-    void validateReadOutput(const std::vector<std::vector<T>>& frame_out) const;
 
     // --- Member Variables ---
     std::vector<std::vector<T>> m_buffer; 
@@ -180,46 +184,55 @@ bool FramingRingBuffer2D<T>::write(const std::vector<std::vector<T>>& data_in, s
 }
 
 template <typename T>
-void FramingRingBuffer2D<T>::validateReadOutput(const std::vector<std::vector<T>>& frame_out) const {
-    if (frame_out.size() != m_num_channels) {
-        throw std::invalid_argument("Output frame channel count (" + std::to_string(frame_out.size()) + 
-                                    ") does not match buffer channels (" + std::to_string(m_num_channels) + ").");
-    }
-    for (size_t c = 0; c < m_num_channels; ++c) {
-        if (frame_out[c].size() != m_frame_size_features) {
-            throw std::invalid_argument("Output frame size (" + std::to_string(frame_out[c].size()) + 
-                                        ") does not match buffer frame size (" + std::to_string(m_frame_size_features) + ").");
+bool FramingRingBuffer2D<T>::read(std::vector<std::vector<std::vector<T>>>& frames_out, size_t num_frames) {
+    size_t available = getAvailableFramesRead();
+    size_t count_to_read = 0;
+
+    // Logic for "Read All" vs "Read Specific Amount"
+    if (num_frames == 0) {
+        count_to_read = available;
+    } else {
+        if (available < num_frames) {
+            // Strict check failed
+            return false;
         }
+        count_to_read = num_frames;
     }
-}
 
-template <typename T>
-bool FramingRingBuffer2D<T>::read(std::vector<std::vector<T>>& frame_out) {
-    // 1. Check Availability (Runtime State -> Return False)
-    if (m_frame_size_features > m_available_features) return false;
-    if (m_hop_size_features > m_available_features) return false;
+    if (count_to_read == 0) {
+        // Nothing to read (buffer empty or requested 0 explicitly if logic changed, 
+        // but here 0 req means 'all', so this catches empty buffer)
+        frames_out.clear();
+        return false;
+    }
 
-    // 2. Validate Output Container (Logic Errors -> Exception)
-    validateReadOutput(frame_out);
+    frames_out.resize(count_to_read);
 
-    // 3. Perform Read
-    for (size_t c = 0; c < m_num_channels; ++c) {
-        T* dest_data = frame_out[c].data();
-        const T* buffer_data = m_buffer[c].data();
+    for (size_t i = 0; i < count_to_read; ++i) {
+        // Prepare the container for this specific frame
+        frames_out[i].resize(m_num_channels);
+        for (size_t c = 0; c < m_num_channels; ++c) {
+            frames_out[i][c].resize(m_frame_size_features);
+            
+            // Perform the copy
+            T* dest_data = frames_out[i][c].data();
+            const T* buffer_data = m_buffer[c].data();
 
-        size_t read_pos = m_read_index_features;
-        size_t space_to_end = m_capacity_features - read_pos;
+            size_t read_pos = m_read_index_features;
+            size_t space_to_end = m_capacity_features - read_pos;
 
-        if (m_frame_size_features > space_to_end) {
-            std::memcpy(dest_data, buffer_data + read_pos, space_to_end * sizeof(T));
-            std::memcpy(dest_data + space_to_end, buffer_data, (m_frame_size_features - space_to_end) * sizeof(T));
-        } else {
-            std::memcpy(dest_data, buffer_data + read_pos, m_frame_size_features * sizeof(T));
+            if (m_frame_size_features > space_to_end) {
+                std::memcpy(dest_data, buffer_data + read_pos, space_to_end * sizeof(T));
+                std::memcpy(dest_data + space_to_end, buffer_data, (m_frame_size_features - space_to_end) * sizeof(T));
+            } else {
+                std::memcpy(dest_data, buffer_data + read_pos, m_frame_size_features * sizeof(T));
+            }
         }
-    }
 
-    m_read_index_features = (m_read_index_features + m_hop_size_features) % m_capacity_features;
-    m_available_features -= m_hop_size_features;
+        // Advance indices
+        m_read_index_features = (m_read_index_features + m_hop_size_features) % m_capacity_features;
+        m_available_features -= m_hop_size_features;
+    }
 
     return true;
 }
