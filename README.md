@@ -7,7 +7,7 @@ It provides templated classes for managing blocks and frames of data, supporting
 ## Features
 - Header-only: Just include the headers and go.
 - Templated: Works with any data type (float, double, int, etc.).
-- Block & Frame Based: Designed to write blocks of data (e.g., from an audio callback) and read overlapping frames.
+- Block & Frame Based: Block & Frame Based: Write blocks of data (e.g., from audio callback). Read contiguous blocks covering specific frames.
 - Performance: Uses std::memcpy for fast, efficient data copies.
 - CMake-Ready: Includes a modern CMake setup for easy integration and examples.
 
@@ -52,7 +52,7 @@ cmake --build .
 ```
 
 ## Basic Usage
-The buffers are designed to be written to in blocks and read from in overlapping frames.
+The buffers are designed to be written to in blocks. Reading requests a number of frames, and the buffer returns a contiguous block of memory covering the time span of those frames (without duplicating overlapping samples).
 ```
 #include "JABuff/FramingRingBuffer2D.hpp"
 #include <vector>
@@ -64,6 +64,7 @@ int main() {
     size_t frame_size_features = 512;
     size_t hop_size_features = 128;
     // Optional: size_t min_frames = 1; // Default is 1 (requires full frame)
+    // Optional: size_t keep_frames = 0; // Default is 0
 
     // Create a buffer for 2 channels, 1024-sample capacity,
     // with a frame size of 512 and hop size of 128.
@@ -88,7 +89,9 @@ int main() {
     std::cout << "Available frames to read: " << buffer.getAvailableFramesRead() << std::endl;
 
     // Prepare an output buffer. It will be resized automatically.
-    // Layout: [Channel][Concatenated Samples of Frame 0 | Frame 1 | ...]
+    // Layout: [Channel][Contiguous Samples]
+    // The output contains the union of samples for the requested frames.
+    // Size = (num_frames - 1) * hop_size + frame_size
     std::vector<std::vector<float>> output_buffer;
 
     // Read the frame
@@ -96,8 +99,10 @@ int main() {
         std::cout << "Read one 512-sample frame." << std::endl;
         std::cout << "Available features after read: " << buffer.getAvailableFeaturesRead() << std::endl;
         std::cout << "Available frames after read: " << buffer.getAvailableFramesRead() << std::endl;
+        
+        // Accessing data: output_buffer[channel][sample_index]
+        float val = output_buffer[0][0];
     }
 
     return 0;
-}
 ```
