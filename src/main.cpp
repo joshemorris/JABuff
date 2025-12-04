@@ -14,10 +14,12 @@ void Test2DBuffer() {
     size_t frame_size = 512;
     size_t hop_size = 128;
 
+    // Use default min_frames = 1, keep_frames = 0
     JABuff::FramingRingBuffer2D<float> buffer(num_channels, capacity, frame_size, hop_size);
 
     std::cout << "Buffer created. Capacity: " << buffer.getCapacity() << " features." << std::endl;
     std::cout << "Frame Size: " << buffer.getFrameSizeFeatures() << ", Hop Size: " << buffer.getHopSizeFeatures() << std::endl;
+    std::cout << "Min Frames: " << buffer.getMinFrames() << std::endl;
     std::cout << "Is empty? " << std::boolalpha << buffer.isEmpty() << std::endl;
 
     // --- Test Write ---
@@ -30,7 +32,7 @@ void Test2DBuffer() {
 
 
     if (buffer.write(input_data)) {
-        std::cout << "Wrote " << write_size << " features." << std::endl;
+        std::cout << "Wrote 256 samples." << std::endl;
     } else {
         std::cout << "Failed to write features." << std::endl;
     }
@@ -40,10 +42,10 @@ void Test2DBuffer() {
     std::cout << "Is empty? " << std::boolalpha << buffer.isEmpty() << std::endl;
 
     // --- Test Read (not enough data) ---
-    // Note: Frames vector will be resized by read()
-    std::vector<std::vector<std::vector<float>>> frames_out;
+    // Change: 2D vector [channel][samples]
+    std::vector<std::vector<float>> buffer_out;
 
-    if (!buffer.read(frames_out)) {
+    if (!buffer.read(buffer_out)) {
         std::cout << "Read failed (as expected, not enough data for frame)." << std::endl;
     }
 
@@ -55,15 +57,17 @@ void Test2DBuffer() {
     std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // Should be 1
 
     // --- Test Read (should succeed) ---
-    if (buffer.read(frames_out)) { // Defaults to 1 frame
-        size_t read_count = frames_out.size();
-        // Access the first frame (index 0)
-        std::cout << "Read " << read_count << " frame(s)." << std::endl;
-        std::cout << "Frame size: " << (frames_out[0].empty() ? 0 : frames_out[0][0].size()) << std::endl;
-        std::cout << "Channel 0, first element: " << frames_out[0][0][0] << std::endl; // 0.0
-        std::cout << "Channel 1, first element: " << frames_out[0][1][0] << std::endl; // 1000.0
-        std::cout << "Channel 0, last element: " << frames_out[0][0].back() << std::endl; // 255.0 (from 2nd write)
-        std::cout << "Available features after read: " << buffer.getAvailableFeaturesRead() << std::endl; // Should be 512 - 128 = 384
+    if (buffer.read(buffer_out)) { // Defaults to 1 frame
+        size_t num_frames = 1;
+        // Total samples = (num_frames-1)*hop + frame
+        std::cout << "Read " << num_frames << " frame(s)." << std::endl;
+        std::cout << "Output Size (Channel 0): " << (buffer_out[0].empty() ? 0 : buffer_out[0].size()) << std::endl;
+        
+        // Access: buffer_out[channel][index]
+        std::cout << "Channel 0, first element: " << buffer_out[0][0] << std::endl; // 0.0
+        std::cout << "Channel 1, first element: " << buffer_out[1][0] << std::endl; // 1000.0
+        std::cout << "Channel 0, last element: " << buffer_out[0].back() << std::endl; // 255.0
+        std::cout << "Available features after read: " << buffer.getAvailableFeaturesRead() << std::endl; // 384
     }
 
     std::cout << "Available features after read: " << buffer.getAvailableFeaturesRead() << std::endl; // 384
@@ -91,10 +95,10 @@ void Test2DBuffer() {
     std::vector<std::vector<float>> partial_data(num_channels, std::vector<float>(768));
     std::iota(partial_data[0].begin(), partial_data[0].end(), 0.0f);
     std::iota(partial_data[1].begin(), partial_data[1].end(), 0.0f);
-    buffer.write(partial_data); // write_index = 768, available = 768
+    buffer.write(partial_data); 
     
     // 2. Read 512, hop 256
-    buffer.read(frames_out); // read_index = 256, available = 512
+    buffer.read(buffer_out);
     std::cout << "Available features: " << buffer.getAvailableFeaturesRead() << std::endl; // 512
     std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // 1
     
@@ -102,42 +106,41 @@ void Test2DBuffer() {
     std::vector<std::vector<float>> wrap_data(num_channels, std::vector<float>(512));
     std::iota(wrap_data[0].begin(), wrap_data[0].end(), 10000.0f);
     std::iota(wrap_data[1].begin(), wrap_data[1].end(), 10000.0f);
-    buffer.write(wrap_data); // write_index = 256, available = 1024
+    buffer.write(wrap_data); 
     std::cout << "Available features: " << buffer.getAvailableFeaturesRead() << std::endl; // 1024
-    std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // 1 + (1024-512)/128 = 1 + 512/128 = 5
+    std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; 
     
-    // 4. Read 512, hop 256. Starts from read_index 256.
+    // 4. Read 512, hop 256. 
     //    Should read data [256..767]
-    buffer.read(frames_out); // read_index = 512, available = 768
-    std::cout << "Read frame. First val: " << frames_out[0][0][0] << std::endl; // 256.0
-    std::cout << "Read frame. Last val: " << frames_out[0][0].back() << std::endl; // 767.0
+    buffer.read(buffer_out); 
+    std::cout << "Read frame. First val: " << buffer_out[0][0] << std::endl; // 256.0
+    std::cout << "Read frame. Last val: " << buffer_out[0].back() << std::endl; // 767.0
     std::cout << "Available features: " << buffer.getAvailableFeaturesRead() << std::endl; // 768
-    std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // 1 + (768-512)/128 = 1 + 256/128 = 3
+    std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; 
 
-    // 5. Read 512, hop 256. Starts from read_index 512.
+    // 5. Read 512, hop 256. 
     //    Should read data [512..1023] (wraps in buffer)
-    buffer.read(frames_out); // read_index = 768, available = 512
+    buffer.read(buffer_out);
     std::cout << "Read wrapped frame." << std::endl;
-    std::cout << "First val: " << frames_out[0][0][0] << std::endl; // 512.0
-    std::cout << "Val at 255: " << frames_out[0][0][255] << std::endl; // 767.0
-    std::cout << "Val at 256: " << frames_out[0][0][256] << std::endl; // 10000.0
-    std::cout << "Last val: " << frames_out[0][0].back() << std::endl; // 10255.0
+    std::cout << "First val: " << buffer_out[0][0] << std::endl; // 512.0
+    std::cout << "Val at 255: " << buffer_out[0][255] << std::endl; // 767.0
+    std::cout << "Val at 256: " << buffer_out[0][256] << std::endl; // 10000.0
+    std::cout << "Last val: " << buffer_out[0].back() << std::endl; // 10255.0
     std::cout << "Available features: " << buffer.getAvailableFeaturesRead() << std::endl; // 512
     std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // 1
 
-    // 6. Read 512, hop 256. Starts from read_index 768.
-    //    Should read data [768..1023] and [0..255] (wraps in buffer)
-    buffer.read(frames_out); // read_index = 0, available = 256
+    // 6. Read 512, hop 256.
+    buffer.read(buffer_out);
     std::cout << "Read wrapped frame 2." << std::endl;
-    std::cout << "First val: " << frames_out[0][0][0] << std::endl; // 10000.0
-    std::cout << "Val at 255: " << frames_out[0][0][255] << std::endl; // 10255.0
-    std::cout << "Val at 256: " << frames_out[0][0][256] << std::endl; // 10256.0
-    std::cout << "Last val: " << frames_out[0][0].back() << std::endl; // 10511.0
+    std::cout << "First val: " << buffer_out[0][0] << std::endl; // 10000.0
+    std::cout << "Val at 255: " << buffer_out[0][255] << std::endl; // 10255.0
+    std::cout << "Val at 256: " << buffer_out[0][256] << std::endl; // 10256.0
+    std::cout << "Last val: " << buffer_out[0].back() << std::endl; // 10511.0
     std::cout << "Available features: " << buffer.getAvailableFeaturesRead() << std::endl; // 256
     std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // 0
     
     // 7. Read 512, hop 256.
-    if (!buffer.read(frames_out)) {
+    if (!buffer.read(buffer_out)) {
         std::cout << "Read failed (as expected, not enough data)." << std::endl;
     }
 }
@@ -151,6 +154,7 @@ void Test3DBuffer() {
     size_t frame_size_time = 10;
     size_t hop_size_time = 5;
 
+    // Use default min_frames = 1
     JABuff::FramingRingBuffer3D<float> buffer(
         num_channels, feature_dim, capacity_time, frame_size_time, hop_size_time);
 
@@ -158,6 +162,7 @@ void Test3DBuffer() {
     std::cout << "Capacity: " << buffer.getCapacity() << " time steps." << std::endl;
     std::cout << "Frame Size: " << buffer.getFrameSizeTime() << " time steps." << std::endl;
     std::cout << "Feature Dim: " << buffer.getFeatureDim() << std::endl;
+    std::cout << "Min Frames: " << buffer.getMinFrames() << std::endl;
     std::cout << "Is empty? " << std::boolalpha << buffer.isEmpty() << std::endl;
 
     // --- Test Write ---
@@ -189,10 +194,10 @@ void Test3DBuffer() {
     std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // 0
 
     // --- Test Read (not enough data) ---
-    // [Frames][Channel][Time][Feature]
-    std::vector<std::vector<std::vector<std::vector<float>>>> frames_out;
+    // [Channel][Time][Feature]
+    std::vector<std::vector<std::vector<float>>> buffer_out;
 
-    if (!buffer.read(frames_out)) {
+    if (!buffer.read(buffer_out)) {
         std::cout << "Read failed (as expected, not enough data)." << std::endl;
     }
 
@@ -204,19 +209,24 @@ void Test3DBuffer() {
     std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // 1 + (16-10)/5 = 2
 
     // --- Test Read (should succeed) ---
-    if (buffer.read(frames_out)) {
+    if (buffer.read(buffer_out)) {
         std::cout << "Read one 3D frame." << std::endl;
-        // Check first value: Frame 0, channel 0, time 0, feature 0
-        std::cout << "Ch 0, T 0, F 0: " << frames_out[0][0][0][0] << std::endl; // 0.0
-        // Check last value of first block: ch 0, time 7, feature 3
-        std::cout << "Ch 0, T 7, F 3: " << frames_out[0][0][7][3] << std::endl; // 73.0
-        // Check first value of second block: ch 0, time 8, feature 0
-        std::cout << "Ch 0, T 8, F 0: " << frames_out[0][0][8][0] << std::endl; // 80.0
-        // Check last value of frame: ch 0, time 9, feature 3
-        std::cout << "Ch 0, T 9, F 3: " << frames_out[0][0][9][3] << std::endl; // 93.0
-        // Check a value from channel 1
-        std::cout << "Ch 1, T 0, F 0: " << frames_out[0][1][0][0] << std::endl; // 80.0
-        std::cout << "Ch 1, T 9, F 3: " << frames_out[0][1][9][3] << std::endl; // 173.0
+        
+        // Output format is [channel][time][feature]
+        // Frame 0 is time indices 0-9
+        // Channel 0, Time 0, Feature 0
+        std::cout << "Ch 0, T 0, F 0: " << buffer_out[0][0][0] << std::endl; // 0.0
+        // Channel 0, Time 7, Feature 3
+        std::cout << "Ch 0, T 7, F 3: " << buffer_out[0][7][3] << std::endl; // 73.0
+        // Channel 0, Time 8, Feature 0
+        std::cout << "Ch 0, T 8, F 0: " << buffer_out[0][8][0] << std::endl; // 80.0
+        // Channel 0, Time 9, Feature 3
+        std::cout << "Ch 0, T 9, F 3: " << buffer_out[0][9][3] << std::endl; // 93.0
+        
+        // Channel 1, Time 0, Feature 0
+        std::cout << "Ch 1, T 0, F 0: " << buffer_out[1][0][0] << std::endl; // 80.0
+        // Channel 1, Time 9, Feature 3
+        std::cout << "Ch 1, T 9, F 3: " << buffer_out[1][9][3] << std::endl; // 173.0
     } else {
         std::cout << "Failed to read 3D frame (unexpected)." << std::endl;
     }
@@ -233,6 +243,7 @@ void TestOffsetWrite() {
     size_t frame_size = 10;
     size_t hop_size = 5;
 
+    // Use default min_frames = 1
     JABuff::FramingRingBuffer2D<float> buffer(num_channels, capacity, frame_size, hop_size);
 
     // Create a vector of 20 elements: 0, 1, 2... 19
@@ -253,10 +264,10 @@ void TestOffsetWrite() {
 
     // Read a frame (size 10)
     // Should be: 5, 6, 7, 8, 9, 15, 16, 17, 18, 19
-    std::vector<std::vector<std::vector<float>>> frames_out;
-    if (buffer.read(frames_out)) {
+    std::vector<std::vector<float>> buffer_out;
+    if (buffer.read(buffer_out)) {
         std::cout << "Read Frame: ";
-        for (float f : frames_out[0][0]) {
+        for (float f : buffer_out[0]) {
             std::cout << f << " ";
         }
         std::cout << std::endl;
@@ -270,7 +281,7 @@ void TestOffsetWrite3D() {
     
     size_t num_channels = 1;
     size_t feature_dim = 2;
-    // Capacity 100, Frame 10, Hop 5
+    // Capacity 100, Frame 10, Hop 5, Min Frames default = 1
     JABuff::FramingRingBuffer3D<float> buffer(num_channels, feature_dim, 100, 10, 5);
 
     // Create 20 time steps of data
@@ -298,30 +309,30 @@ void TestOffsetWrite3D() {
 
     // Total 10 steps. Frame size is 10. Should be able to read 1 frame.
     // That frame should contain [5, 6, 7, 8, 9, 15, 16, 17, 18, 19]
-    std::vector<std::vector<std::vector<std::vector<float>>>> frames;
-    if (buffer.read(frames, 1)) {
+    std::vector<std::vector<std::vector<float>>> buffer_out;
+    if (buffer.read(buffer_out, 1)) {
         std::cout << "Read 1 frame." << std::endl;
         // Verify contents
         bool match = true;
         
         // Check index 0 (was input index 5)
-        if (frames[0][0][0][0] != 5.0f) match = false;
+        if (buffer_out[0][0][0] != 5.0f) match = false;
         
         // Check index 4 (was input index 9)
-        if (frames[0][0][4][0] != 9.0f) match = false;
+        if (buffer_out[0][4][0] != 9.0f) match = false;
 
         // Check index 5 (was input index 15)
-        if (frames[0][0][5][0] != 15.0f) match = false;
+        if (buffer_out[0][5][0] != 15.0f) match = false;
 
         // Check index 9 (was input index 19)
-        if (frames[0][0][9][0] != 19.0f) match = false;
+        if (buffer_out[0][9][0] != 19.0f) match = false;
 
         if (match) {
             std::cout << "[Success] Data matches expected slices." << std::endl;
         } else {
              std::cout << "[Fail] Data mismatch." << std::endl;
-             std::cout << "Index 0 val: " << frames[0][0][0][0] << " (Expected 5.0)" << std::endl;
-             std::cout << "Index 5 val: " << frames[0][0][5][0] << " (Expected 15.0)" << std::endl;
+             std::cout << "Index 0 val: " << buffer_out[0][0][0] << " (Expected 5.0)" << std::endl;
+             std::cout << "Index 5 val: " << buffer_out[0][5][0] << " (Expected 15.0)" << std::endl;
         }
     } else {
         std::cout << "[Fail] Could not read frame." << std::endl;
@@ -331,6 +342,7 @@ void TestOffsetWrite3D() {
 void TestExceptions() {
     std::cout << "\n--- Testing Exception Handling ---" << std::endl;
 
+    // Use default min_frames = 1
     JABuff::FramingRingBuffer2D<float> buffer(1, 100, 10, 5);
     std::vector<std::vector<float>> input(1, std::vector<float>(20, 1.0f));
 
@@ -372,7 +384,7 @@ void TestExceptions() {
 
 void TestVariableRead2D() {
     std::cout << "\n--- Testing Variable Read (2D) ---" << std::endl;
-    // Capacity 100, Frame 10, Hop 5
+    // Capacity 100, Frame 10, Hop 5, Min Frames default = 1
     JABuff::FramingRingBuffer2D<float> buffer(1, 100, 10, 5);
     
     // Write 20 items: 0..19
@@ -382,14 +394,21 @@ void TestVariableRead2D() {
 
     std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // Should be 3: [0-9], [5-14], [10-19]
 
-    std::vector<std::vector<std::vector<float>>> frames;
+    std::vector<std::vector<float>> buffer_out;
     
     // 1. Read specific count (2)
     // Should succeed because 3 available > 2 requested
-    if (buffer.read(frames, 2)) {
-        std::cout << "Requested 2, read " << frames.size() << " frames." << std::endl;
-        std::cout << "Frame 0 start: " << frames[0][0][0] << " (Expected 0)" << std::endl;
-        std::cout << "Frame 1 start: " << frames[1][0][0] << " (Expected 5)" << std::endl;
+    if (buffer.read(buffer_out, 2)) {
+        // buffer_out is now [1][20] (2 frames of 10 samples each)
+        // Frame 0 is 0..9
+        // Frame 1 is 5..14. 
+        // With NO repeats, this should be a union:
+        // Size = (2-1)*5 + 10 = 15 samples.
+        // Samples: 0..14.
+        
+        std::cout << "Requested 2, read size: " << buffer_out[0].size() << std::endl;
+        std::cout << "Frame 0 start: " << buffer_out[0][0] << " (Expected 0)" << std::endl;
+        std::cout << "Frame 1 start: " << buffer_out[0][5] << " (Expected 5)" << std::endl; // hop is 5
     } else {
         std::cout << "[Fail] Failed to read 2 frames." << std::endl;
     }
@@ -397,7 +416,7 @@ void TestVariableRead2D() {
     // 2. Read remaining STRICT (Request 100)
     // Should FAIL because only 1 available < 100 requested
     std::cout << "Requesting 100 frames (Strict check)..." << std::endl;
-    if (!buffer.read(frames, 100)) { 
+    if (!buffer.read(buffer_out, 100)) { 
         std::cout << "[Success] Strict read failed (returned false) as expected." << std::endl;
     } else {
         std::cout << "[Fail] Strict read returned true?" << std::endl;
@@ -406,9 +425,9 @@ void TestVariableRead2D() {
     // 3. Read remaining ALL (Request 0)
     // Should SUCCEED and read the 1 remaining frame
     std::cout << "Requesting ALL frames (0)..." << std::endl;
-    if (buffer.read(frames, 0)) {
-         std::cout << "[Success] Read " << frames.size() << " frame(s)." << std::endl;
-         std::cout << "Frame 0 start: " << frames[0][0][0] << " (Expected 10)" << std::endl;
+    if (buffer.read(buffer_out, 0)) {
+         std::cout << "[Success] Read size " << buffer_out[0].size() << std::endl;
+         std::cout << "Frame 0 start: " << buffer_out[0][0] << " (Expected 10)" << std::endl;
     } else {
         std::cout << "[Fail] Read All failed." << std::endl;
     }
@@ -416,7 +435,7 @@ void TestVariableRead2D() {
 
 void TestVariableRead3D() {
     std::cout << "\n--- Testing Variable Read (3D) ---" << std::endl;
-    // Capacity 100, Frame 10, Hop 5, Feature Dim 2
+    // Capacity 100, Frame 10, Hop 5, Feature Dim 2, Min Frames default = 1
     size_t num_channels = 1;
     size_t feature_dim = 2;
     JABuff::FramingRingBuffer3D<float> buffer(num_channels, feature_dim, 100, 10, 5);
@@ -440,16 +459,16 @@ void TestVariableRead3D() {
 
     std::cout << "Available frames: " << buffer.getAvailableFramesRead() << std::endl; // Should be 3: [0-9], [5-14], [10-19]
 
-    std::vector<std::vector<std::vector<std::vector<float>>>> frames;
+    std::vector<std::vector<std::vector<float>>> buffer_out;
     
     // 1. Read specific count (2)
     // Should succeed
-    if (buffer.read(frames, 2)) {
-        std::cout << "Requested 2, read " << frames.size() << " frames." << std::endl;
+    if (buffer.read(buffer_out, 2)) {
+        std::cout << "Requested 2, read size: " << buffer_out[0].size() << std::endl; // Should be 15
         // Frame 0 starts at t=0. Val at t=0,f=0 is 0.
-        std::cout << "Frame 0, T=0, F=0: " << frames[0][0][0][0] << " (Expected 0)" << std::endl;
-        // Frame 1 starts at t=5. Val at t=0(relative),f=0 is 50.
-        std::cout << "Frame 1, T=0, F=0: " << frames[1][0][0][0] << " (Expected 50)" << std::endl;
+        std::cout << "Frame 0, T=0, F=0: " << buffer_out[0][0][0] << " (Expected 0)" << std::endl;
+        // Frame 1 starts at t=5. Concatenated at index 5.
+        std::cout << "Frame 1, T=0, F=0: " << buffer_out[0][5][0] << " (Expected 50)" << std::endl;
     } else {
         std::cout << "[Fail] Failed to read 2 frames." << std::endl;
     }
@@ -457,7 +476,7 @@ void TestVariableRead3D() {
     // 2. Read remaining STRICT (Request 100)
     // Should FAIL
     std::cout << "Requesting 100 frames (Strict check)..." << std::endl;
-    if (!buffer.read(frames, 100)) { 
+    if (!buffer.read(buffer_out, 100)) { 
         std::cout << "[Success] Strict read failed (returned false) as expected." << std::endl;
     } else {
         std::cout << "[Fail] Strict read returned true?" << std::endl;
@@ -466,13 +485,103 @@ void TestVariableRead3D() {
     // 3. Read remaining ALL (Request 0)
     // Should SUCCEED and read the 1 remaining frame (starts at t=10)
     std::cout << "Requesting ALL frames (0)..." << std::endl;
-    if (buffer.read(frames, 0)) {
-         std::cout << "[Success] Read " << frames.size() << " frame(s)." << std::endl;
+    if (buffer.read(buffer_out, 0)) {
+         std::cout << "[Success] Read size " << buffer_out[0].size() << std::endl;
          // Frame starts at t=10. Val is 100.
-         std::cout << "Frame 0, T=0, F=0: " << frames[0][0][0][0] << " (Expected 100)" << std::endl;
+         std::cout << "Frame 0, T=0, F=0: " << buffer_out[0][0][0] << " (Expected 100)" << std::endl;
     } else {
         std::cout << "[Fail] Read All failed." << std::endl;
     }
+}
+
+void TestKeepFrames() {
+    std::cout << "\n--- Testing Keep Frames (2D) ---" << std::endl;
+    // Capacity 100, Frame 10, Hop 5, Min Frames 1, Keep Frames 1
+    size_t num_channels = 1;
+    JABuff::FramingRingBuffer2D<float> buffer(num_channels, 100, 10, 5, 1, 1);
+
+    // Write 20: 0..19
+    std::vector<std::vector<float>> input(1, std::vector<float>(20));
+    std::iota(input[0].begin(), input[0].end(), 0.0f);
+    buffer.write(input);
+    
+    // Initial State:
+    // Available: 20
+    // Frames: [0-9], [5-14], [10-19] -> 3 frames
+
+    std::vector<std::vector<float>> buffer_out;
+
+    // 1. Read 1 frame. Keep 1.
+    // Logic: Requested 1. Keep 1. Consumed = max(0, 1-1) = 0.
+    // Should read frame 0, but NOT advance buffer indices.
+    buffer.read(buffer_out, 1);
+    std::cout << "Read 1 frame (Keep 1). Frame start: " << buffer_out[0][0] << " (Expected 0)" << std::endl;
+    std::cout << "Available after peek: " << buffer.getAvailableFeaturesRead() << " (Expected 20)" << std::endl;
+
+    // 2. Read 2 frames. Keep 1.
+    // Logic: Requested 2. Keep 1. Consumed = 2 - 1 = 1 frame (5 features).
+    // Should read frame 0 [0-9] and frame 1 [5-14].
+    // Union = (2-1)*5 + 10 = 15.
+    buffer.read(buffer_out, 2);
+    // Frame 0 at 0. Frame 1 at 5.
+    std::cout << "Read 2 frames (Keep 1)." << std::endl;
+    std::cout << "Frame 0 start: " << buffer_out[0][0] << " (Expected 0)" << std::endl;
+    std::cout << "Frame 1 start: " << buffer_out[0][5] << " (Expected 5)" << std::endl;
+    std::cout << "Available after read: " << buffer.getAvailableFeaturesRead() << " (Expected 15)" << std::endl;
+
+    // 3. Check next read
+    // Buffer should now start at index 5.
+    buffer.read(buffer_out, 1);
+    std::cout << "Next read 1 frame (Keep 1). Frame start: " << buffer_out[0][0] << " (Expected 5)" << std::endl;
+
+}
+
+void TestKeepFrames3D() {
+    std::cout << "\n--- Testing Keep Frames (3D) ---" << std::endl;
+    // Capacity 100, Frame 10, Hop 5, Min Frames 1, Keep Frames 1
+    size_t num_channels = 1;
+    size_t feature_dim = 2;
+    JABuff::FramingRingBuffer3D<float> buffer(num_channels, feature_dim, 100, 10, 5, 1, 1);
+
+    // Write 20 time steps
+    std::vector<std::vector<std::vector<float>>> input(
+        num_channels, 
+        std::vector<std::vector<float>>(
+            20, 
+            std::vector<float>(feature_dim)
+        )
+    );
+
+    // Data: t=0..19. feature[0] = t, feature[1] = t*2
+    for(size_t t=0; t<20; ++t) {
+        input[0][t][0] = (float)t;
+        input[0][t][1] = (float)t * 2.0f;
+    }
+    buffer.write(input);
+
+    std::vector<std::vector<std::vector<float>>> buffer_out;
+
+    // 1. Read 1 frame. Keep 1.
+    // Logic: Requested 1. Keep 1. Consumed = max(0, 1-1) = 0.
+    // Should read frame 0 (t=0..9), but NOT advance buffer indices.
+    buffer.read(buffer_out, 1);
+    std::cout << "Read 1 frame (Keep 1). Frame start (Feat 0): " << buffer_out[0][0][0] << " (Expected 0)" << std::endl;
+    std::cout << "Available time after peek: " << buffer.getAvailableTimeRead() << " (Expected 20)" << std::endl;
+
+    // 2. Read 2 frames. Keep 1.
+    // Logic: Requested 2. Keep 1. Consumed = 2 - 1 = 1 frame (5 time steps).
+    // Should read frame 0 [0-9] and frame 1 [5-14].
+    // Union = (2-1)*5 + 10 = 15.
+    buffer.read(buffer_out, 2);
+    std::cout << "Read 2 frames (Keep 1)." << std::endl;
+    std::cout << "Frame 0 start (Feat 0): " << buffer_out[0][0][0] << " (Expected 0)" << std::endl;
+    std::cout << "Frame 1 start (Feat 0): " << buffer_out[0][5][0] << " (Expected 5)" << std::endl;
+    std::cout << "Available time after read: " << buffer.getAvailableTimeRead() << " (Expected 15)" << std::endl;
+
+    // 3. Check next read
+    // Buffer should now start at time index 5.
+    buffer.read(buffer_out, 1);
+    std::cout << "Next read 1 frame (Keep 1). Frame start (Feat 0): " << buffer_out[0][0][0] << " (Expected 5)" << std::endl;
 }
 
 int main() {
@@ -485,6 +594,8 @@ int main() {
     TestExceptions();
     TestVariableRead2D();
     TestVariableRead3D();
+    TestKeepFrames();
+    TestKeepFrames3D();
     
     return 0;
 }

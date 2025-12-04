@@ -33,8 +33,12 @@ public:
      * *per channel* (dimension 2).
      * @param frame_size_time The number of time steps to read per frame.
      * @param hop_size_time The number of time steps to advance after each read.
+     * @param min_frames The minimum number of available frames required to perform a read.
+     * Defaults to 1 (requires at least one full frame to be available).
+     * @param keep_frames The number of frames to keep in the buffer after a read operation.
+     * These frames will be available for the *next* read operation. Defaults to 0.
      */
-    FramingRingBuffer3D(size_t num_channels, size_t feature_dim, size_t capacity_time, size_t frame_size_time, size_t hop_size_time);
+    FramingRingBuffer3D(size_t num_channels, size_t feature_dim, size_t capacity_time, size_t frame_size_time, size_t hop_size_time, size_t min_frames = 1, size_t keep_frames = 0);
 
     /**
      * @brief Writes a block of data.
@@ -45,15 +49,20 @@ public:
     bool write(const std::vector<std::vector<std::vector<T>>>& data_in, size_t offset_time = 0, size_t num_time_steps = 0);
 
     /**
-     * @brief Reads frames from the buffer.
-     * * @param frames_out Output vector [frame_index][channel][time][feature]. Resized automatically.
+     * @brief Reads a contiguous block of data covering the requested frames.
+     * * The output is organized as [channel][time][feature].
+     * * Unlike previous versions, this does NOT duplicate overlapping time steps.
+     * It returns a single continuous vector representing the union of the requested frames.
+     * * Total time steps = (num_frames - 1) * hop_size + frame_size.
+     * To access Frame 'i' from this buffer, read starting at time index (i * hop_size).
+     * * @param buffer_out Output vector [channel][time][feature]. Resized automatically.
      * @param num_frames The number of frames to read. 
      * If 0, reads ALL available frames.
      * If > 0, strictly requires that number of frames to be available.
      * @return true if the frames were successfully read.
-     * @return false if there were not enough frames available (or 0 frames available in "Read All" mode).
+     * @return false if there were not enough frames available (or < min_frames available).
      */
-    bool read(std::vector<std::vector<std::vector<std::vector<T>>>>& frames_out, size_t num_frames = 1);
+    bool read(std::vector<std::vector<std::vector<T>>>& buffer_out, size_t num_frames = 1);
 
     size_t getAvailableFramesRead() const;
     size_t getAvailableTimeRead() const;
@@ -63,6 +72,8 @@ public:
     size_t getFeatureDim() const;
     size_t getFrameSizeTime() const;
     size_t getHopSizeTime() const;
+    size_t getMinFrames() const;
+    size_t getKeepFrames() const;
     bool isFull() const;
     bool isEmpty() const;
     void clear();
@@ -78,6 +89,8 @@ private:
     size_t m_capacity_time;
     size_t m_frame_size_time;
     size_t m_hop_size_time;
+    size_t m_min_frames;
+    size_t m_keep_frames;        
     size_t m_write_index_time;
     size_t m_read_index_time;
     size_t m_available_time;
@@ -88,12 +101,14 @@ private:
 // ===================================================================
 
 template <typename T>
-FramingRingBuffer3D<T>::FramingRingBuffer3D(size_t num_channels, size_t feature_dim, size_t capacity_time, size_t frame_size_time, size_t hop_size_time)
+FramingRingBuffer3D<T>::FramingRingBuffer3D(size_t num_channels, size_t feature_dim, size_t capacity_time, size_t frame_size_time, size_t hop_size_time, size_t min_frames, size_t keep_frames)
     : m_num_channels(num_channels),
       m_feature_dim(feature_dim),
       m_capacity_time(capacity_time),
       m_frame_size_time(frame_size_time),
       m_hop_size_time(hop_size_time),
+      m_min_frames(min_frames),
+      m_keep_frames(keep_frames),
       m_write_index_time(0),
       m_read_index_time(0),
       m_available_time(0) {
@@ -201,8 +216,14 @@ bool FramingRingBuffer3D<T>::write(const std::vector<std::vector<std::vector<T>>
 }
 
 template <typename T>
-bool FramingRingBuffer3D<T>::read(std::vector<std::vector<std::vector<std::vector<T>>>>& frames_out, size_t num_frames) {
+bool FramingRingBuffer3D<T>::read(std::vector<std::vector<std::vector<T>>>& buffer_out, size_t num_frames) {
     size_t available = getAvailableFramesRead();
+
+    // Check minimum frames requirement
+    if (available < m_min_frames) {
+        return false;
+    }
+
     size_t count_to_read = 0;
 
     // Logic for "Read All" vs "Read Specific Amount"
@@ -217,35 +238,44 @@ bool FramingRingBuffer3D<T>::read(std::vector<std::vector<std::vector<std::vecto
     }
 
     if (count_to_read == 0) {
-        frames_out.clear();
+        buffer_out.clear();
         return false;
     }
 
-    frames_out.resize(count_to_read);
-
-    for (size_t i = 0; i < count_to_read; ++i) {
-        frames_out[i].resize(m_num_channels);
-        for (size_t c = 0; c < m_num_channels; ++c) {
-            frames_out[i][c].resize(m_frame_size_time);
-            for (size_t t = 0; t < m_frame_size_time; ++t) {
-                frames_out[i][c][t].resize(m_feature_dim);
-            }
-
-            // Copy Data
-            T* dest_ptr = frames_out[i][c][0].data(); // Pointer to start of time block
-            // Note: Since feature_dim is contiguous, but time is not necessarily contiguous in circular buffer,
-            // we have to loop over time.
-            for (size_t t = 0; t < m_frame_size_time; ++t) {
-                size_t read_pos_time = (m_read_index_time + t) % m_capacity_time;
-                T* dest_feature = frames_out[i][c][t].data();
-                const T* src_feature = m_buffers[c][read_pos_time].data();
-                std::memcpy(dest_feature, src_feature, m_feature_dim * sizeof(T));
-            }
+    // Calculate total continuous time steps needed to cover these frames
+    // Size = (N-1) * hop + frame_size
+    size_t total_time_steps = (count_to_read - 1) * m_hop_size_time + m_frame_size_time;
+    
+    // Resize output vector [Channels][Total Time Steps][Features]
+    buffer_out.resize(m_num_channels);
+    for(size_t c = 0; c < m_num_channels; ++c) {
+        buffer_out[c].resize(total_time_steps);
+        for(size_t t = 0; t < total_time_steps; ++t) {
+            buffer_out[c][t].resize(m_feature_dim);
         }
-        
-        m_read_index_time = (m_read_index_time + m_hop_size_time) % m_capacity_time;
-        m_available_time -= m_hop_size_time;
     }
+
+    for (size_t c = 0; c < m_num_channels; ++c) {
+        // Continuous copy of total_time_steps, handling wrap-around
+        for (size_t t = 0; t < total_time_steps; ++t) {
+            size_t read_pos_time = (m_read_index_time + t) % m_capacity_time;
+            
+            T* dest_feature = buffer_out[c][t].data();
+            const T* src_feature = m_buffers[c][read_pos_time].data();
+            std::memcpy(dest_feature, src_feature, m_feature_dim * sizeof(T));
+        }
+    }
+
+    // Update actual member variables based on keep_frames
+    size_t frames_consumed = 0;
+    if (count_to_read > m_keep_frames) {
+        frames_consumed = count_to_read - m_keep_frames;
+    }
+
+    size_t time_consumed = frames_consumed * m_hop_size_time;
+
+    m_read_index_time = (m_read_index_time + time_consumed) % m_capacity_time;
+    m_available_time -= time_consumed;
 
     return true;
 }
@@ -276,6 +306,12 @@ size_t FramingRingBuffer3D<T>::getFrameSizeTime() const { return m_frame_size_ti
 
 template <typename T>
 size_t FramingRingBuffer3D<T>::getHopSizeTime() const { return m_hop_size_time; }
+
+template <typename T>
+size_t FramingRingBuffer3D<T>::getMinFrames() const { return m_min_frames; }
+
+template <typename T>
+size_t FramingRingBuffer3D<T>::getKeepFrames() const { return m_keep_frames; }
 
 template <typename T>
 bool FramingRingBuffer3D<T>::isFull() const { return getAvailableWrite() == 0; }

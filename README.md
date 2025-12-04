@@ -54,7 +54,7 @@ cmake --build .
 ## Basic Usage
 The buffers are designed to be written to in blocks and read from in overlapping frames.
 ```
-#include "JABuff/2DFramingRingBuffer.hpp"
+#include "JABuff/FramingRingBuffer2D.hpp"
 #include <vector>
 #include <iostream>
 
@@ -63,10 +63,11 @@ int main() {
     size_t capacity_features = 1024; // 1024 features/samples per channel
     size_t frame_size_features = 512;
     size_t hop_size_features = 128;
+    // Optional: size_t min_frames = 1; // Default is 1 (requires full frame)
 
     // Create a buffer for 2 channels, 1024-sample capacity,
     // with a frame size of 512 and hop size of 128.
-    JABuff::2DFramingRingBuffer<float> buffer(
+    JABuff::FramingRingBuffer2D<float> buffer(
         num_channels, 
         capacity_features, 
         frame_size_features, 
@@ -86,14 +87,12 @@ int main() {
     std::cout << "Wrote another 256 samples." << std::endl;
     std::cout << "Available frames to read: " << buffer.getAvailableFramesRead() << std::endl;
 
-    // Prepare an output frame (must be pre-sized)
-    std::vector<std::vector<float>> output_frame(
-        num_channels, 
-        std::vector<float>(frame_size_features)
-    );
+    // Prepare an output buffer. It will be resized automatically.
+    // Layout: [Channel][Concatenated Samples of Frame 0 | Frame 1 | ...]
+    std::vector<std::vector<float>> output_buffer;
 
     // Read the frame
-    if (buffer.read(output_frame)) {
+    if (buffer.read(output_buffer)) {
         std::cout << "Read one 512-sample frame." << std::endl;
         std::cout << "Available features after read: " << buffer.getAvailableFeaturesRead() << std::endl;
         std::cout << "Available frames after read: " << buffer.getAvailableFramesRead() << std::endl;
