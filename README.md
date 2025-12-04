@@ -2,7 +2,7 @@
 
 JABuff is a minimal, high-performance, header-only C++17 library for framing circular buffers, ideal for real-time audio applications.
 
-It provides templated classes for managing blocks and frames of data, supporting overlapping reads (e.g., for STFT processing).
+It provides templated classes for managing blocks and frames of data, handling the logic of buffering input blocks and producing continuous blocks of data covering requested frames (handling overlaps internally).
 
 ## Features
 - Header-only: Just include the headers and go.
