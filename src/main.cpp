@@ -584,6 +584,69 @@ void TestKeepFrames3D() {
     std::cout << "Next read 1 frame (Keep 1). Frame start (Feat 0): " << buffer_out[0][0][0] << " (Expected 5)" << std::endl;
 }
 
+void TestPush2D() {
+    std::cout << "\n--- Testing Single Element Push (2D) ---" << std::endl;
+    size_t num_channels = 2;
+    // Capacity 10 features per channel
+    JABuff::FramingRingBuffer2D<float> buffer(num_channels, 10, 5, 2);
+
+    std::vector<float> single_frame(num_channels);
+    
+    // Write 5 samples one by one
+    for(int i = 0; i < 5; ++i) {
+        single_frame[0] = (float)i;        // Ch 0: 0, 1, 2, 3, 4
+        single_frame[1] = (float)i + 10.0f;// Ch 1: 10, 11, 12, 13, 14
+        buffer.push(single_frame);
+    }
+
+    std::cout << "Pushed 5 frames. Available features: " << buffer.getAvailableFeaturesRead() << " (Expected 5)" << std::endl;
+
+    // Read 1 frame (size 5)
+    std::vector<std::vector<float>> buffer_out;
+    if (buffer.read(buffer_out, 1)) {
+        std::cout << "Read 1 frame." << std::endl;
+        std::cout << "Ch 0 Last: " << buffer_out[0].back() << " (Expected 4)" << std::endl;
+        std::cout << "Ch 1 Last: " << buffer_out[1].back() << " (Expected 14)" << std::endl;
+    } else {
+        std::cout << "[Fail] Could not read frame." << std::endl;
+    }
+}
+
+void TestPush3D() {
+    std::cout << "\n--- Testing Single Element Push (3D) ---" << std::endl;
+    size_t num_channels = 2;
+    size_t feature_dim = 2;
+    // Capacity 10 time steps
+    JABuff::FramingRingBuffer3D<float> buffer(num_channels, feature_dim, 10, 5, 2);
+
+    // [Channel][Feature] for a single time step
+    std::vector<std::vector<float>> single_step(num_channels, std::vector<float>(feature_dim));
+
+    // Write 5 time steps
+    for(int t = 0; t < 5; ++t) {
+        single_step[0][0] = (float)t;       // Ch 0, Feat 0
+        single_step[0][1] = (float)t * 2;   // Ch 0, Feat 1
+        
+        single_step[1][0] = (float)t + 10;  // Ch 1, Feat 0
+        single_step[1][1] = (float)t + 20;  // Ch 1, Feat 1
+
+        buffer.push(single_step);
+    }
+
+    std::cout << "Pushed 5 steps. Available time: " << buffer.getAvailableTimeRead() << " (Expected 5)" << std::endl;
+
+    // Read 1 frame (size 5)
+    std::vector<std::vector<std::vector<float>>> buffer_out;
+    if (buffer.read(buffer_out, 1)) {
+        std::cout << "Read 1 frame." << std::endl;
+        // Check last element (t=4)
+        std::cout << "Ch 0, Last Time, Feat 0: " << buffer_out[0].back()[0] << " (Expected 4)" << std::endl;
+        std::cout << "Ch 1, Last Time, Feat 1: " << buffer_out[1].back()[1] << " (Expected 24)" << std::endl;
+    } else {
+         std::cout << "[Fail] Could not read frame." << std::endl;
+    }
+}
+
 int main() {
     std::cout << "JABuff Example Application" << std::endl;
     
@@ -596,6 +659,8 @@ int main() {
     TestVariableRead3D();
     TestKeepFrames();
     TestKeepFrames3D();
+    TestPush2D();
+    TestPush3D();
     
     return 0;
 }

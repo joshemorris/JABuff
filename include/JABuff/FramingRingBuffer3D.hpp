@@ -49,6 +49,14 @@ public:
     bool write(const std::vector<std::vector<std::vector<T>>>& data_in, size_t offset_time = 0, size_t num_time_steps = 0);
 
     /**
+     * @brief Writes a single time step to the buffer.
+     * * @param time_step_data A vector of size [channels], where each element is a vector of size [feature_dim].
+     * @return true if write succeeded, false if buffer full.
+     * @throws std::invalid_argument if channel count or feature dimensions mismatch.
+     */
+    bool push(const std::vector<std::vector<T>>& time_step_data);
+
+    /**
      * @brief Reads a contiguous block of data covering the requested frames.
      * * The output is organized as [channel][time][feature].
      * * Unlike previous versions, this does NOT duplicate overlapping time steps.
@@ -211,6 +219,36 @@ bool FramingRingBuffer3D<T>::write(const std::vector<std::vector<std::vector<T>>
 
     m_write_index_time = (m_write_index_time + actual_write_time) % m_capacity_time;
     m_available_time += actual_write_time;
+
+    return true;
+}
+
+template <typename T>
+bool FramingRingBuffer3D<T>::push(const std::vector<std::vector<T>>& time_step_data) {
+    // 1. Validate sizes
+    if (time_step_data.size() != m_num_channels) {
+        throw std::invalid_argument("Input channel count (" + std::to_string(time_step_data.size()) + 
+                                    ") does not match buffer channels (" + std::to_string(m_num_channels) + ").");
+    }
+    
+    // 2. Check Capacity
+    if (getAvailableWrite() < 1) {
+        return false;
+    }
+
+    // 3. Perform Write
+    for (size_t c = 0; c < m_num_channels; ++c) {
+        if (time_step_data[c].size() != m_feature_dim) {
+            throw std::invalid_argument("Feature dimension mismatch at Ch " + std::to_string(c) + ".");
+        }
+        
+        T* dest_ptr = m_buffers[c][m_write_index_time].data();
+        const T* src_ptr = time_step_data[c].data();
+        std::memcpy(dest_ptr, src_ptr, m_feature_dim * sizeof(T));
+    }
+
+    m_write_index_time = (m_write_index_time + 1) % m_capacity_time;
+    m_available_time++;
 
     return true;
 }

@@ -49,6 +49,15 @@ public:
     bool write(const std::vector<std::vector<T>>& data_in, size_t offset = 0, size_t num_to_write = 0);
 
     /**
+     * @brief Writes a single time-step (one sample per channel) to the buffer.
+     * Efficient for writing data one sample at a time (e.g. inside a loop casting types).
+     * * @param frame_data A vector containing one sample for each channel. Size must equal num_channels.
+     * @return true if write succeeded, false if buffer full.
+     * @throws std::invalid_argument if frame_data size does not match number of channels.
+     */
+    bool push(const std::vector<T>& frame_data);
+
+    /**
      * @brief Reads a contiguous block of data covering the requested frames.
      * * The output is organized as [channel][samples].
      * * Unlike previous versions, this does NOT duplicate overlapping samples.
@@ -194,6 +203,30 @@ bool FramingRingBuffer2D<T>::write(const std::vector<std::vector<T>>& data_in, s
 
     m_write_index_features = (m_write_index_features + actual_write_size) % m_capacity_features;
     m_available_features += actual_write_size;
+
+    return true;
+}
+
+template <typename T>
+bool FramingRingBuffer2D<T>::push(const std::vector<T>& frame_data) {
+    // 1. Validate Input
+    if (frame_data.size() != m_num_channels) {
+        throw std::invalid_argument("Input frame channel count (" + std::to_string(frame_data.size()) + 
+                                    ") does not match buffer channels (" + std::to_string(m_num_channels) + ").");
+    }
+
+    // 2. Check Capacity
+    if (getAvailableWrite() < 1) {
+        return false;
+    }
+
+    // 3. Perform Write
+    for (size_t c = 0; c < m_num_channels; ++c) {
+        m_buffer[c][m_write_index_features] = frame_data[c];
+    }
+
+    m_write_index_features = (m_write_index_features + 1) % m_capacity_features;
+    m_available_features++;
 
     return true;
 }
