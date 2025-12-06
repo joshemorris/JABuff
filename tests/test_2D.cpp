@@ -163,6 +163,25 @@ void TestPush() {
     ASSERT_NEAR(out[0].back(), 4.0f, 0.001f, "Data validation failed");
 }
 
+void TestReady() {
+    print_header("TestReady");
+    // Min frames = 2
+    JABuff::FramingRingBuffer2D<float> buffer(1, 100, 10, 5, 2);
+    
+    std::vector<std::vector<float>> input(1, std::vector<float>(10, 1.0f)); // 1 frame
+    
+    // 0 frames
+    ASSERT(!buffer.ready(), "Should not be ready (empty)");
+    
+    // 1 frame
+    buffer.write(input);
+    ASSERT(!buffer.ready(), "Should not be ready (1 frame < min 2)");
+    
+    // 2 frames
+    buffer.write(input);
+    ASSERT(buffer.ready(), "Should be ready (2 frames == min 2)");
+}
+
 int main() {
     TestBasicFlow();
     TestWrapAround();
@@ -170,6 +189,7 @@ int main() {
     TestVariableRead();
     TestKeepFrames();
     TestPush();
+    TestReady();
     print_pass();
     return 0;
 }

@@ -86,10 +86,31 @@ void TestPush3D() {
     ASSERT_NEAR(out[1][4][1], 14.0f, 0.001f, "Val verification ch2");
 }
 
+void TestReady3D() {
+    print_header("TestReady3D");
+    JABuff::FramingRingBuffer3D<float> buffer(1, 2, 100, 10, 5, 2); // Min frames 2
+    
+    std::vector<std::vector<std::vector<float>>> input(
+        1, std::vector<std::vector<float>>(10, std::vector<float>(2, 1.0f))
+    );
+
+    // 0 frames
+    ASSERT(!buffer.ready(), "Should not be ready (empty)");
+
+    // 1 frame
+    buffer.write(input);
+    ASSERT(!buffer.ready(), "Should not be ready (1 frame < min 2)");
+
+    // 2 frames
+    buffer.write(input);
+    ASSERT(buffer.ready(), "Should be ready (2 frames == min 2)");
+}
+
 int main() {
     TestBasic3D();
     TestOffsetWrite3D();
     TestPush3D();
+    TestReady3D();
     print_pass();
     return 0;
 }

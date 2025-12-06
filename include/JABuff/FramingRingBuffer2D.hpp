@@ -58,6 +58,13 @@ public:
     bool push(const std::vector<T>& frame_data);
 
     /**
+     * @brief Checks if the buffer has enough data to perform a read.
+     * Checks if the number of available frames is greater than or equal to min_frames.
+     * @return true if ready to read.
+     */
+    bool ready() const;
+
+    /**
      * @brief Reads a contiguous block of data covering the requested frames.
      * * The output is organized as [channel][samples].
      * * Unlike previous versions, this does NOT duplicate overlapping samples.
@@ -232,7 +239,14 @@ bool FramingRingBuffer2D<T>::push(const std::vector<T>& frame_data) {
 }
 
 template <typename T>
+bool FramingRingBuffer2D<T>::ready() const {
+    return getAvailableFramesRead() >= m_min_frames;
+}
+
+template <typename T>
 bool FramingRingBuffer2D<T>::read(std::vector<std::vector<T>>& buffer_out, size_t num_frames) {
+    // Use the new ready() method logic internally if appropriate, 
+    // but read() also needs to check if *num_frames* are available if > 0.
     size_t available = getAvailableFramesRead();
 
     // Check minimum frames requirement

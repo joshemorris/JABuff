@@ -57,6 +57,13 @@ public:
     bool push(const std::vector<std::vector<T>>& time_step_data);
 
     /**
+     * @brief Checks if the buffer has enough data to perform a read.
+     * Checks if the number of available frames is greater than or equal to min_frames.
+     * @return true if ready to read.
+     */
+    bool ready() const;
+
+    /**
      * @brief Reads a contiguous block of data covering the requested frames.
      * * The output is organized as [channel][time][feature].
      * * Unlike previous versions, this does NOT duplicate overlapping time steps.
@@ -251,6 +258,11 @@ bool FramingRingBuffer3D<T>::push(const std::vector<std::vector<T>>& time_step_d
     m_available_time++;
 
     return true;
+}
+
+template <typename T>
+bool FramingRingBuffer3D<T>::ready() const {
+    return getAvailableFramesRead() >= m_min_frames;
 }
 
 template <typename T>
