@@ -10,6 +10,7 @@ It provides templated classes for managing blocks and frames of data, handling t
 - Block & Frame Based: Block & Frame Based: Write blocks of data (e.g., from audio callback). Read contiguous blocks covering specific frames.
 - Performance: Uses std::memcpy for fast, efficient data copies.
 - CMake-Ready: Includes a modern CMake setup for easy integration and examples.
+- Robust Testing: Includes a full CTest suite to verify logic, wrap-arounds, and exception handling.
 
 
 ## Classes
@@ -28,11 +29,17 @@ JABuff/
 ├── src/
 │   ├── CMakeLists.txt      # CMake config for the example
 │   └── main.cpp            # Example usage and tests
+├── tests/
+│   ├── CMakeLists.txt      # CMake config for the test suite
+│   ├── test_utils.hpp      # Testing helper macros
+│   ├── test_2d.cpp         # Tests for 2D Buffer
+│   ├── test_3d.cpp         # Tests for 3D Buffer
+│   └── test_exceptions.cpp # Tests for error handling
 ├── CMakeLists.txt          # Top-level CMake config for the library
 └── README.md
 ```
 
-## Building the Example
+## Building
 This project includes a simple example in the `src/` directory.
 ```
 # Clone the repository
@@ -46,10 +53,21 @@ cd build
 # Configure and build
 cmake ..
 cmake --build .
-
-# Run the example
-./src/jabuff_example
 ```
+
+## Tests
+The library includes a CTest suite to verify functionality.
+
+**On Linux / macOS (Single-Config Generators):**
+```
+ctest --output-on-failure
+```
+
+**On Windows (Visual Studio / Multi-Config Generators):**
+You must specify the configuration (Debug/Release) used during the build:
+```
+ctest -C Debug --output-on-failure
+````
 
 ## Basic Usage
 The buffers are designed to be written to in blocks. Reading requests a number of frames, and the buffer returns a contiguous block of memory covering the time span of those frames (without duplicating overlapping samples).

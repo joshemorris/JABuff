@@ -27,11 +27,7 @@ target_include_directories(JABuff INTERFACE
 # This is a good way to test and demonstrate the library.
 add_subdirectory(src)
 
-# # --- Installation ---
-# # This allows users to "install" your library system-wide if they want.
-# include(GNUInstallDirs)
-# 
-# # Install the header files
-# install(DIRECTORY include/JABuff/
-#     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/JABuff
-# )
+
+# --- Testing ---
+enable_testing()
+add_subdirectory(tests)
