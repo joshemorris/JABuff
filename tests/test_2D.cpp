@@ -182,6 +182,60 @@ void TestReady() {
     ASSERT(buffer.ready(), "Should be ready (2 frames == min 2)");
 }
 
+void TestPrime() {
+    print_header("TestPrime");
+
+    // Case 1: Standard Latency Correction (MinFrames = 1)
+    // Frame=10, Hop=5. To read 1 frame (10 samples), we need 10 samples.
+    // We want the NEXT Hop (5 samples) to trigger readiness.
+    // So we need to prime: 10 - 5 = 5 samples.
+    {
+        JABuff::FramingRingBuffer2D<float> buffer(1, 100, 10, 5, 1);
+        
+        // Prime with value 0.5
+        buffer.prime(0.5f);
+        
+        ASSERT(buffer.getAvailableFeaturesRead() == 5, "Prime amount incorrect (MinFrames=1)");
+        ASSERT(!buffer.ready(), "Should not be ready immediately after prime");
+
+        // Now write exactly one hop (5 samples)
+        std::vector<std::vector<float>> input(1, std::vector<float>(5, 1.0f));
+        buffer.write(input);
+
+        ASSERT(buffer.ready(), "Should be ready after Prime + 1 Hop");
+        ASSERT(buffer.getAvailableFeaturesRead() == 10, "Total features mismatch");
+        
+        // Read and verify data structure: [PrimeData... InputData...]
+        std::vector<std::vector<float>> out;
+        buffer.read(out);
+        
+        ASSERT(out[0].size() == 10, "Output size mismatch");
+        ASSERT_NEAR(out[0][0], 0.5f, 0.001f, "Prime value mismatch (start)");
+        ASSERT_NEAR(out[0][4], 0.5f, 0.001f, "Prime value mismatch (end of prime)");
+        ASSERT_NEAR(out[0][5], 1.0f, 0.001f, "Input value mismatch (start of input)");
+    }
+
+    // Case 2: High MinFrames Requirement (MinFrames = 2)
+    // Frame=10, Hop=5. To read 2 frames we need: (2-1)*Hop + Frame = 5 + 10 = 15 samples.
+    // We want NEXT Hop (5 samples) to trigger readiness.
+    // Prime needs: 15 - 5 = 10 samples.
+    {
+        JABuff::FramingRingBuffer2D<float> buffer(1, 100, 10, 5, 2);
+        buffer.prime(-1.0f);
+
+        ASSERT(buffer.getAvailableFeaturesRead() == 10, "Prime amount incorrect (MinFrames=2)");
+        ASSERT(!buffer.ready(), "Should not be ready yet (10 < 15)");
+
+        // Write 1 hop
+        std::vector<std::vector<float>> input(1, std::vector<float>(5, 2.0f));
+        buffer.write(input);
+
+        ASSERT(buffer.ready(), "Should be ready after Prime + 1 Hop");
+        ASSERT(buffer.getAvailableFeaturesRead() == 15, "Total features mismatch");
+        ASSERT(buffer.getAvailableFramesRead() == 2, "Should have 2 frames available");
+    }
+}
+
 int main() {
     TestBasicFlow();
     TestWrapAround();
@@ -190,6 +244,7 @@ int main() {
     TestKeepFrames();
     TestPush();
     TestReady();
+    TestPrime();
     print_pass();
     return 0;
 }

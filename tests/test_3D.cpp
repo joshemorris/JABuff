@@ -106,11 +106,65 @@ void TestReady3D() {
     ASSERT(buffer.ready(), "Should be ready (2 frames == min 2)");
 }
 
+void TestPrime3D() {
+    print_header("TestPrime3D");
+
+    // Case 1: Standard Latency Correction (MinFrames = 1)
+    // Frame=10, Hop=5. Need 10 time steps total.
+    // We want the NEXT Hop (5 steps) to trigger readiness.
+    // Prime needs: 10 - 5 = 5 time steps.
+    {
+        JABuff::FramingRingBuffer3D<float> buffer(1, 2, 100, 10, 5, 1);
+        
+        // Prime with 0.5
+        buffer.prime(0.5f);
+        
+        ASSERT(buffer.getAvailableTimeRead() == 5, "Prime amount incorrect (MinFrames=1)");
+        ASSERT(!buffer.ready(), "Should not be ready yet");
+
+        // Write 1 hop (5 steps)
+        std::vector<std::vector<std::vector<float>>> input(
+            1, std::vector<std::vector<float>>(5, std::vector<float>(2, 1.0f))
+        );
+        buffer.write(input);
+        
+        ASSERT(buffer.ready(), "Should be ready");
+        
+        std::vector<std::vector<std::vector<float>>> out;
+        buffer.read(out);
+        
+        ASSERT(out[0].size() == 10, "Time dim");
+        ASSERT_NEAR(out[0][0][0], 0.5f, 0.001f, "Prime val check");
+        ASSERT_NEAR(out[0][5][0], 1.0f, 0.001f, "Input val check");
+    }
+
+    // Case 2: High MinFrames (MinFrames = 2)
+    // Frame=10, Hop=5. Need 15 time steps total ((2-1)*5 + 10).
+    // We want NEXT Hop (5 steps) to trigger readiness.
+    // Prime needs: 15 - 5 = 10 steps.
+    {
+        JABuff::FramingRingBuffer3D<float> buffer(1, 2, 100, 10, 5, 2);
+        buffer.prime(9.0f);
+        
+        ASSERT(buffer.getAvailableTimeRead() == 10, "Prime amount incorrect (MinFrames=2)");
+        
+        // Write 1 hop
+         std::vector<std::vector<std::vector<float>>> input(
+            1, std::vector<std::vector<float>>(5, std::vector<float>(2, 2.0f))
+        );
+        buffer.write(input);
+        
+        ASSERT(buffer.ready(), "Should be ready");
+        ASSERT(buffer.getAvailableFramesRead() == 2, "Should have 2 frames");
+    }
+}
+
 int main() {
     TestBasic3D();
     TestOffsetWrite3D();
     TestPush3D();
     TestReady3D();
+    TestPrime3D();
     print_pass();
     return 0;
 }

@@ -57,6 +57,16 @@ public:
     bool push(const std::vector<std::vector<T>>& time_step_data);
 
     /**
+     * @brief Primes the buffer with enough time steps (default 0) so that the next write of 'hop_size'
+     * time steps will make the buffer ready to read 'min_frames'.
+     *
+     * Formula: PrimeTimeSteps = ((min_frames - 1) * hop_size + frame_size) - hop_size.
+     *
+     * @param value The value to fill the buffer with (default 0).
+     */
+    void prime(T value = 0);
+
+    /**
      * @brief Checks if the buffer has enough data to perform a read.
      * Checks if the number of available frames is greater than or equal to min_frames.
      * @return true if ready to read.
@@ -258,6 +268,30 @@ bool FramingRingBuffer3D<T>::push(const std::vector<std::vector<T>>& time_step_d
     m_available_time++;
 
     return true;
+}
+
+template <typename T>
+void FramingRingBuffer3D<T>::prime(T value) {
+    // Calculate total time steps needed to satisfy min_frames requirement
+    size_t target_time = (m_min_frames - 1) * m_hop_size_time + m_frame_size_time;
+    
+    // We want the NEXT hop to make it ready, so we need (Target - Hop) now.
+    size_t time_to_prime = 0;
+    
+    if (target_time > m_hop_size_time) {
+        time_to_prime = target_time - m_hop_size_time;
+    }
+
+    if (time_to_prime > 0) {
+        // Create a 3D block: [Channels][Time][Features]
+        std::vector<std::vector<std::vector<T>>> prime_data(
+            m_num_channels, 
+            std::vector<std::vector<T>>(time_to_prime, std::vector<T>(m_feature_dim, value))
+        );
+        
+        // Write it to the buffer (this handles index updates and wrapping)
+        write(prime_data);
+    }
 }
 
 template <typename T>

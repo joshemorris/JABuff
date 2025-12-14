@@ -58,6 +58,19 @@ public:
     bool push(const std::vector<T>& frame_data);
 
     /**
+     * @brief Primes the buffer with enough samples (default 0) so that the next write of 'hop_size'
+     * samples will make the buffer ready to read 'min_frames'.
+     *
+     * This is useful for pre-filling the buffer to align latency or ensure immediate availability
+     * after the first valid input block.
+     *
+     * Formula: PrimeAmount = ((min_frames - 1) * hop_size + frame_size) - hop_size.
+     *
+     * @param value The value to fill the buffer with (default 0).
+     */
+    void prime(T value = 0);
+
+    /**
      * @brief Checks if the buffer has enough data to perform a read.
      * Checks if the number of available frames is greater than or equal to min_frames.
      * @return true if ready to read.
@@ -236,6 +249,27 @@ bool FramingRingBuffer2D<T>::push(const std::vector<T>& frame_data) {
     m_available_features++;
 
     return true;
+}
+
+template <typename T>
+void FramingRingBuffer2D<T>::prime(T value) {
+    // Calculate total features needed to satisfy min_frames requirement
+    size_t target_features = (m_min_frames - 1) * m_hop_size_features + m_frame_size_features;
+    
+    // We want the NEXT hop to make it ready, so we need (Target - Hop) now.
+    size_t samples_to_prime = 0;
+    
+    if (target_features > m_hop_size_features) {
+        samples_to_prime = target_features - m_hop_size_features;
+    }
+
+    if (samples_to_prime > 0) {
+        // Create a temporary block of data to write
+        std::vector<std::vector<T>> prime_data(m_num_channels, std::vector<T>(samples_to_prime, value));
+        
+        // Write it to the buffer (this handles index updates and wrapping)
+        write(prime_data);
+    }
 }
 
 template <typename T>
