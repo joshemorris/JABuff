@@ -17,7 +17,7 @@ It provides templated classes for managing blocks and frames of data, handling t
 ## Classes
 
 - `JABuff::FramingRingBuffer2D<T>`: A circular buffer for 2D data (e.g., num_channels x time). Ideal for standard audio samples.
-- `JABuff::3DFramingRingBuffer3D<T>`: A circular buffer for 3D data (e.g., num_channels x time x feature_dim). Ideal for spectrograms or other feature matrices.
+- `JABuff::FramingRingBuffer3D<T>`: A circular buffer for 3D data (e.g., num_channels x time x feature_dim). Ideal for spectrograms or other feature matrices.
 
 ## Repository Organization
 ```
@@ -25,8 +25,8 @@ JABuff/
 ├── build/                  # (Created by you) CMake build output
 ├── include/
 │   └── JABuff/
-│       ├── 2DFramingRingBuffer.hpp
-│       └── 3DFramingRingBuffer.hpp
+│       ├── FramingRingBuffer2D.hpp
+│       └── FramingRingBuffer3D.hpp
 ├── src/
 │   ├── CMakeLists.txt      # CMake config for the example
 │   └── main.cpp            # Example usage and tests
