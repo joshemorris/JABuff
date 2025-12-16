@@ -8,4 +8,5 @@ endmacro()
 # Register tests
 add_jabuff_test(Test2D test_2d.cpp)
 add_jabuff_test(Test3D test_3d.cpp)
+add_jabuff_test(TestOLA test_ola.cpp)
 add_jabuff_test(TestExceptions test_exceptions.cpp)

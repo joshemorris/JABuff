@@ -8,6 +8,7 @@ It provides templated classes for managing blocks and frames of data, handling t
 - **Header-only:** Just include the headers and go.
 - **Templated:** Works with any data type (float, double, int, etc.).
 - **Block & Frame Based:** Write blocks of data (e.g., from audio callback). Read contiguous blocks covering specific frames.
+- **Overlap-Add Support:** Specific class for crossfaded concatenation of audio blocks.
 - **Performance:** Uses `std::memcpy` for fast, efficient data copies.
 - **Latency Control:** Includes a `prime()` method to pre-fill buffers for latency alignment
 - **CMake-Ready:** Includes a modern CMake setup for easy integration and examples.
@@ -18,6 +19,7 @@ It provides templated classes for managing blocks and frames of data, handling t
 
 - `JABuff::FramingRingBuffer2D<T>`: A circular buffer for 2D data (e.g., num_channels x time). Ideal for standard audio samples.
 - `JABuff::FramingRingBuffer3D<T>`: A circular buffer for 3D data (e.g., num_channels x time x feature_dim). Ideal for spectrograms or other feature matrices.
+- `JABuff::OLARingBuffer2D<T>`: An Overlap-Add buffer. Writes perform a crossfaded splice between the tail of the previous block and the head of the new block using a constant-energy curve. Reads produce contiguous frames.
 
 ## Repository Organization
 ```
@@ -26,7 +28,8 @@ JABuff/
 ├── include/
 │   └── JABuff/
 │       ├── FramingRingBuffer2D.hpp
-│       └── FramingRingBuffer3D.hpp
+│       ├── FramingRingBuffer3D.hpp
+│       └── OLARingBuffer2D.hpp
 ├── src/
 │   ├── CMakeLists.txt      # CMake config for the example
 │   └── main.cpp            # Example usage and tests
@@ -35,6 +38,7 @@ JABuff/
 │   ├── test_utils.hpp      # Testing helper macros
 │   ├── test_2d.cpp         # Tests for 2D Buffer
 │   ├── test_3d.cpp         # Tests for 3D Buffer
+│   ├── test_ola.cpp        # Tests for OLA Buffer
 │   └── test_exceptions.cpp # Tests for error handling
 ├── CMakeLists.txt          # Top-level CMake config for the library
 └── README.md
@@ -71,7 +75,11 @@ ctest -C Debug --output-on-failure
 ````
 
 ## Basic Usage
+
+### Framing Buffer
+
 The buffers are designed to be written to in blocks. Reading requests a number of frames, and the buffer returns a contiguous block of memory covering the time span of those frames (without duplicating overlapping samples).
+
 ```
 #include "JABuff/FramingRingBuffer2D.hpp"
 #include <vector>
@@ -126,6 +134,43 @@ int main() {
         float val = output_buffer[0][0];
     }
 
+    return 0;
+}
+```
+
+### Overlap-Add Buffer
+
+This buffer automatically crossfades (splices) new blocks onto the end of the previous block, useful for reconstructing audio from granular synthesis or network packets where boundaries might click.
+
+```
+#include "JABuff/OLARingBuffer2D.hpp"
+#include <vector>
+
+int main() {
+    size_t num_channels = 2;
+    size_t capacity = 44100;
+    size_t output_frame_size = 512;
+    size_t overlap_size = 64; // Duration of the crossfade splice
+
+    JABuff::OLARingBuffer2D<float> ola_buffer(
+        num_channels, 
+        capacity, 
+        output_frame_size, 
+        overlap_size
+    );
+    
+    // Write variable sized blocks
+    // The first 'overlap_size' samples of this block will be crossfaded 
+    // with the last 'overlap_size' samples of the previous block.
+    std::vector<std::vector<float>> input_block(num_channels, std::vector<float>(1000, 0.5f));
+    ola_buffer.write(input_block);
+
+    // Read fixed size frames
+    std::vector<std::vector<float>> output;
+    if (ola_buffer.read(output)) {
+        // output contains 'output_frame_size' samples
+    }
+    
     return 0;
 }
 ```
