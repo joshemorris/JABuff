@@ -19,7 +19,7 @@ It provides templated classes for managing blocks and frames of data, handling t
 
 - `JABuff::FramingRingBuffer2D<T>`: A circular buffer for 2D data (e.g., num_channels x time). Ideal for standard audio samples.
 - `JABuff::FramingRingBuffer3D<T>`: A circular buffer for 3D data (e.g., num_channels x time x feature_dim). Ideal for spectrograms or other feature matrices.
-- `JABuff::OLARingBuffer2D<T>`: An Overlap-Add buffer. Writes perform a crossfaded splice between the tail of the previous block and the head of the new block using a constant-energy curve. Reads produce contiguous frames.
+- `JABuff::OLARingBuffer2D<T>`: An Overlap-Add buffer. Writes perform a crossfaded splice between the tail of the previous block and the head of the new block using a constant-energy curve. Reads produce contiguous frames (Hop Size = Frame Size).
 
 ## Repository Organization
 ```
@@ -140,7 +140,7 @@ int main() {
 
 ### Overlap-Add Buffer
 
-This buffer automatically crossfades (splices) new blocks onto the end of the previous block, useful for reconstructing audio from granular synthesis or network packets where boundaries might click.
+This buffer automatically crossfades (splices) new blocks onto the end of the previous block. It enforces contiguous reading (Hop Size = Frame Size).
 
 ```
 #include "JABuff/OLARingBuffer2D.hpp"
@@ -159,16 +159,24 @@ int main() {
         overlap_size
     );
     
+    // Optional: Prime the tail to be silence. 
+    // This ensures the first write fades in from 0 instead of garbage.
+    ola_buffer.primeWithSilence();
+
     // Write variable sized blocks
-    // The first 'overlap_size' samples of this block will be crossfaded 
-    // with the last 'overlap_size' samples of the previous block.
+    // Constraint: Input block size must be > 2 * overlap_size.
+    // The first 'overlap_size' samples will splice with the previous tail.
     std::vector<std::vector<float>> input_block(num_channels, std::vector<float>(1000, 0.5f));
-    ola_buffer.write(input_block);
+    
+    if (ola_buffer.write(input_block)) {
+        // Success
+    }
 
     // Read fixed size frames
+    // This reads contiguous blocks (Hop = Frame Size = 512)
     std::vector<std::vector<float>> output;
     if (ola_buffer.read(output)) {
-        // output contains 'output_frame_size' samples
+        // output contains 'output_frame_size' samples (512)
     }
     
     return 0;
