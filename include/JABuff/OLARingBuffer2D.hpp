@@ -16,11 +16,13 @@ namespace JABuff {
  * Write Behavior:
  * - Accepts variable-sized blocks of audio.
  * - Splicing: Crossfades the overlap_size region of the new block with the tail of the previous block.
+ * - Constraint: Input block size must be > 2 * overlap_size.
  * - Uses a "Cheap Energy-Preserving" crossfade curve.
  * * Read Behavior:
- * - Reads fixed-size frames (frame_size) with overlap (overlap_size).
- * - Does NOT clear the buffer (advances read head like a standard stream).
- * - Only allows reading regions that have been fully written (safe from future overlap-adds).
+ * - Reads contiguous fixed-size frames (frame_size).
+ * - Read Hop Size is equal to Frame Size (0% overlap on read).
+ * - Only allows reading samples that have been fully resolved (passed the splice point).
+ * - "Yet to be overlapped" tail samples are not available for reading.
  *
  * Reference for crossfade: https://signalsmith-audio.co.uk/writing/2021/cheap-energy-crossfade/
  *
@@ -35,10 +37,8 @@ public:
      * @param num_channels The number of channels.
      * @param capacity_samples The total capacity of the internal buffer per channel.
      * @param frame_size The size of the OUTPUT frames to be read.
-     * @param overlap_size The size of the overlap. 
-     * This defines:
-     * 1. The Crossfade duration for WRITING (splicing input blocks).
-     * 2. The Overlap size for READING (output frame overlap).
+     * @param overlap_size The size of the overlap used for WRITING (splicing).
+     * * Note: Read operations will use frame_size as the hop size (contiguous frames).
      */
     OLARingBuffer2D(size_t num_channels, size_t capacity_samples, size_t frame_size, size_t overlap_size);
 
@@ -49,7 +49,7 @@ public:
      * 2. It sums the 'Fade In' of the new data with the 'Fade Out' of the previous data (the tail).
      * 3. It overwrites the subsequent buffer area with the body and new 'Fade Out' tail of this data.
      *
-     * @param data_in Input data [channel][sample]. Size must be >= overlap_size.
+     * @param data_in Input data [channel][sample]. Size must be > 2 * overlap_size.
      * @return true if write succeeded.
      * @return false if buffer full or input too small.
      */
@@ -58,7 +58,7 @@ public:
     /**
      * @brief Reads contiguous frames of audio from the buffer.
      * * Reads 'num_frames' of size 'frame_size'.
-     * Advances the read head by 'hop_size' (frame_size - overlap_size) for each frame.
+     * Advances the read head by 'frame_size' for each frame.
      * Does NOT clear the buffer.
      *
      * @param buffer_out Output vector [channel][sample]. Resized automatically.
@@ -69,11 +69,13 @@ public:
     bool read(std::vector<std::vector<T>>& buffer_out, size_t num_frames = 1);
 
     /**
-     * @brief Writes zero-filled frames to the buffer to introduce latency.
-     * * Creates enough silence to advance the buffer by 'num_hops' * 'hop_size'.
-     * @param num_hops Number of hops of silence to add.
+     * @brief Primes the buffer's tail with silence.
+     * * This Zeros out the 'overlap_size' samples at the current write index.
+     * * It ensures the NEXT write will crossfade with silence (Fade In from 0)
+     * * rather than crossfading with whatever garbage or previous data was there.
+     * * It does NOT advance the write index or available samples.
      */
-    void primeWithSilence(size_t num_hops = 1);
+    void primeWithSilence();
 
     /**
      * @brief Resets read/write pointers and clears the buffer memory.
@@ -103,8 +105,8 @@ private:
     size_t m_num_channels;
     size_t m_capacity_samples;
     size_t m_frame_size;    // For Reading
-    size_t m_overlap_size;  // For Reading AND Writing
-    size_t m_hop_size;      // Derived (Frame - Overlap)
+    size_t m_overlap_size;  // For Writing (Splice Size)
+    size_t m_hop_size;      // Equal to m_frame_size (Contiguous reading)
 
     size_t m_write_index;   // Points to the start of the current "Overlap Region" (where we Add)
     size_t m_read_index;    // Points to the next sample to be read
@@ -131,11 +133,9 @@ OLARingBuffer2D<T>::OLARingBuffer2D(size_t num_channels, size_t capacity_samples
     if (m_frame_size > m_capacity_samples) {
         throw std::invalid_argument("Frame size cannot be larger than capacity.");
     }
-    if (m_overlap_size >= m_frame_size) {
-        throw std::invalid_argument("Overlap size must be less than frame size.");
-    }
-
-    m_hop_size = m_frame_size - m_overlap_size;
+    // Note: Overlap size is now independent of frame size (only affects writing).
+    // Read hop size is implicitly the frame size (contiguous reading).
+    m_hop_size = m_frame_size;
 
     // Allocate buffer
     m_buffer.resize(m_num_channels);
@@ -177,8 +177,10 @@ bool OLARingBuffer2D<T>::write(const std::vector<std::vector<T>>& data_in) {
     }
 
     size_t input_len = data_in[0].size();
-    if (input_len < m_overlap_size) {
-        // We cannot perform a crossfade splice if the input is smaller than the crossfade region.
+    
+    // Constraint: Writing can be any length longer than two times the overlap size.
+    // This ensures distinct regions: Overlap In (Fade In) -> Body -> Overlap Out (Fade Out)
+    if (input_len <= 2 * m_overlap_size) {
         return false;
     }
 
@@ -231,11 +233,7 @@ bool OLARingBuffer2D<T>::write(const std::vector<std::vector<T>>& data_in) {
                 // Apply Fade-Out (Reverse Window)
                 // Window index 0 is silence (start of fade in).
                 // Window index overlap-1 is full vol (end of fade in).
-                // So for fade out: 
-                // sample 0 from end -> silence -> window[0]
-                // sample overlap-1 from end -> full -> window[overlap-1]
                 size_t window_idx = samples_from_end; 
-                // Clamp just in case
                 if (window_idx >= m_overlap_size) window_idx = m_overlap_size - 1;
                 
                 sample *= m_crossfade_window[window_idx];
@@ -252,7 +250,7 @@ bool OLARingBuffer2D<T>::write(const std::vector<std::vector<T>>& data_in) {
     m_write_index = (m_write_index + net_advance) % m_capacity_samples;
     
     // We can now safely read the data up to the start of the new tail.
-    // The tail itself is "incomplete" until the next overlap-add happens.
+    // The tail itself is "incomplete" (yet to be overlapped) and not counted.
     m_available_samples += net_advance;
 
     return true;
@@ -271,9 +269,8 @@ bool OLARingBuffer2D<T>::read(std::vector<std::vector<T>>& buffer_out, size_t nu
     }
 
     // Output setup
-    // Output size per channel = (frames - 1) * hop + frame_size
-    // This creates a contiguous block covering all requested frames.
-    size_t total_samples = (count_to_read - 1) * m_hop_size + m_frame_size;
+    // Output size per channel = count_to_read * frame_size (Contiguous)
+    size_t total_samples = count_to_read * m_frame_size;
     
     buffer_out.resize(m_num_channels);
     for (size_t c = 0; c < m_num_channels; ++c) {
@@ -292,7 +289,7 @@ bool OLARingBuffer2D<T>::read(std::vector<std::vector<T>>& buffer_out, size_t nu
     }
 
     // Advance Read Head
-    // We advance by hops. We DO NOT clear the buffer (as requested).
+    // We advance by frames (hop = frame).
     size_t advance = count_to_read * m_hop_size;
     m_read_index = (m_read_index + advance) % m_capacity_samples;
     m_available_samples -= advance;
@@ -301,22 +298,17 @@ bool OLARingBuffer2D<T>::read(std::vector<std::vector<T>>& buffer_out, size_t nu
 }
 
 template <typename T>
-void OLARingBuffer2D<T>::primeWithSilence(size_t num_hops) {
-    if (num_hops == 0) return;
+void OLARingBuffer2D<T>::primeWithSilence() {
+    // We strictly want to clear the 'tail' (overlap region) at the current write head.
+    // This ensures the NEXT write sums with silence (0.0) instead of existing data.
+    // We do NOT advance indices, because this region is 'waiting' to be overlapped.
     
-    // We want to advance m_available_samples by (num_hops * m_hop_size).
-    // write() advances by (input.size() - m_overlap_size).
-    // So: input.size() - m_overlap_size = num_hops * m_hop_size
-    // input.size() = (num_hops * m_hop_size) + m_overlap_size
-    
-    size_t samples_needed = (num_hops * m_hop_size) + m_overlap_size;
-    
-    std::vector<std::vector<T>> silent_block(
-        m_num_channels, 
-        std::vector<T>(samples_needed, static_cast<T>(0))
-    );
-    
-    write(silent_block);
+    for (size_t c = 0; c < m_num_channels; ++c) {
+        for (size_t i = 0; i < m_overlap_size; ++i) {
+            size_t idx = (m_write_index + i) % m_capacity_samples;
+            m_buffer[c][idx] = static_cast<T>(0);
+        }
+    }
 }
 
 template <typename T>
@@ -333,7 +325,8 @@ void OLARingBuffer2D<T>::clear() {
 template <typename T>
 size_t OLARingBuffer2D<T>::getAvailableFramesRead() const {
     if (m_available_samples < m_frame_size) return 0;
-    return 1 + (m_available_samples - m_frame_size) / m_hop_size;
+    // Simple division since we read contiguous blocks
+    return m_available_samples / m_frame_size;
 }
 
 template <typename T>
